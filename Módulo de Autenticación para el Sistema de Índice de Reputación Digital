@@ -1,0 +1,793 @@
+"""
+Módulo de Autenticación para el Sistema de Índice de Reputación Digital
+=======================================================================
+Este módulo proporciona funcionalidades de autenticación y gestión de usuarios
+utilizando Firebase Authentication o una simulación local.
+"""
+
+import os
+import json
+import datetime
+import uuid
+import re
+import hashlib
+import secrets
+from typing import Dict, List, Optional, Any, Tuple, Union
+
+# Intentar importar Firebase
+try:
+    import firebase_admin
+    from firebase_admin import auth, credentials, firestore
+    FIREBASE_AVAILABLE = True
+except ImportError:
+    FIREBASE_AVAILABLE = False
+
+class AutenticacionUsuarios:
+    """
+    Clase para manejar la autenticación y gestión de usuarios.
+    Puede trabajar con Firebase Authentication o simular autenticación localmente.
+    """
+    
+    def __init__(self, modo: str = "local", firebase_config: Optional[str] = None):
+        """
+        Inicializa el sistema de autenticación.
+        
+        Args:
+            modo (str): "firebase" o "local" para determinar el backend de autenticación.
+            firebase_config (str, opcional): Ruta al archivo de configuración de Firebase.
+        """
+        self.modo = modo
+        self.firebase_app = None
+        self.db = None
+        
+        # Verificar el modo solicitado vs. disponibilidad
+        if modo == "firebase" and not FIREBASE_AVAILABLE:
+            print("ADVERTENCIA: Firebase solicitado pero no disponible. Cambiando a modo local.")
+            self.modo = "local"
+        
+        # Inicializar según el modo
+        if self.modo == "firebase" and FIREBASE_AVAILABLE:
+            self._inicializar_firebase(firebase_config)
+        else:
+            self._inicializar_local()
+            
+        print(f"Sistema de autenticación inicializado en modo: {self.modo}")
+    
+    def _inicializar_firebase(self, config_path: Optional[str]) -> None:
+        """
+        Inicializa la conexión con Firebase Authentication y Firestore.
+        
+        Args:
+            config_path (str, opcional): Ruta al archivo de configuración de Firebase.
+        """
+        try:
+            # Si no hay apps inicializadas
+            if not firebase_admin._apps:
+                # Si se proporciona configuración específica
+                if config_path:
+                    cred = credentials.Certificate(config_path)
+                    self.firebase_app = firebase_admin.initialize_app(cred)
+                else:
+                    # Intentar usar credenciales por defecto
+                    self.firebase_app = firebase_admin.initialize_app()
+            else:
+                # Usar app existente
+                self.firebase_app = firebase_admin.get_app()
+            
+            # Inicializar Firestore
+            self.db = firestore.client()
+            print("✓ Conexión con Firebase Authentication establecida")
+            
+        except Exception as e:
+            print(f"Error al inicializar Firebase: {e}")
+            self._inicializar_local()
+            self.modo = "local"
+    
+    def _inicializar_local(self) -> None:
+        """
+        Inicializa el sistema de autenticación local (simulado).
+        Crea archivos JSON locales para almacenar datos si no existen.
+        """
+        # Directorio para datos locales
+        if not os.path.exists('data'):
+            os.makedirs('data')
+        
+        # Archivo de usuarios
+        if not os.path.exists('data/usuarios.json'):
+            with open('data/usuarios.json', 'w', encoding='utf-8') as f:
+                json.dump([], f)
+        
+        # Archivo de sesiones
+        if not os.path.exists('data/sesiones.json'):
+            with open('data/sesiones.json', 'w', encoding='utf-8') as f:
+                json.dump([], f)
+                
+        print("✓ Sistema de autenticación local inicializado")
+    
+    def registrar_usuario(self, email: str, password: str, 
+                          nombre: str, acepta_terminos: bool = False,
+                          via_google: bool = False) -> Tuple[bool, str, Optional[Dict]]:
+        """
+        Registra un nuevo usuario en el sistema.
+        
+        Args:
+            email (str): Email del usuario
+            password (str): Contraseña (no se usa si via_google=True)
+            nombre (str): Nombre completo del usuario
+            acepta_terminos (bool): Si el usuario aceptó los términos y condiciones
+            via_google (bool): Si el registro es mediante Google
+            
+        Returns:
+            tuple: (éxito, mensaje, datos_usuario)
+        """
+        # Validaciones básicas
+        if not acepta_terminos:
+            return False, "Debe aceptar los términos y condiciones para registrarse", None
+        
+        if not self._validar_email(email):
+            return False, "El formato de email no es válido", None
+        
+        if not via_google and not self._validar_password(password):
+            return False, "La contraseña debe tener al menos 8 caracteres, una letra y un número", None
+        
+        # Procesar según modo
+        if self.modo == "firebase":
+            return self._registrar_usuario_firebase(email, password, nombre, via_google)
+        else:
+            return self._registrar_usuario_local(email, password, nombre, via_google)
+    
+    def _registrar_usuario_firebase(self, email: str, password: str, 
+                                    nombre: str, via_google: bool) -> Tuple[bool, str, Optional[Dict]]:
+        """
+        Registra un usuario utilizando Firebase Authentication.
+        
+        Args:
+            email, password, nombre, via_google: Datos del usuario
+            
+        Returns:
+            tuple: (éxito, mensaje, datos_usuario)
+        """
+        try:
+            # Verificar si el usuario ya existe
+            try:
+                usuario_existente = auth.get_user_by_email(email)
+                return False, "Este email ya está registrado en el sistema", None
+            except:
+                # Si no existe, continuamos con el registro
+                pass
+            
+            # Crear usuario en Firebase Auth
+            if via_google:
+                # Para Google, solo verificamos que no exista
+                # En una implementación real, este flujo sería manejado por el frontend
+                usuario = {"email": email, "nombre": nombre, "via_google": True}
+            else:
+                # Crear usuario con email y contraseña
+                usuario_auth = auth.create_user(
+                    email=email,
+                    password=password,
+                    display_name=nombre,
+                    email_verified=False
+                )
+                
+                usuario = {
+                    "uid": usuario_auth.uid,
+                    "email": email,
+                    "nombre": nombre,
+                    "via_google": False
+                }
+            
+            # Guardar datos adicionales en Firestore
+            datos_usuario = {
+                "email": email,
+                "nombre": nombre,
+                "fecha_registro": datetime.datetime.now(),
+                "via_google": via_google,
+                "acepta_terminos": True,
+                "verificado_cliente": False,
+                "nivel": 1,
+                "puntos": 0,
+                "comentarios": []
+            }
+            
+            # Si tenemos UID (registro normal), lo usamos como ID del documento
+            if "uid" in usuario:
+                self.db.collection('usuarios').document(usuario["uid"]).set(datos_usuario)
+            else:
+                # Para Google, usaríamos el UID proporcionado por Google Auth
+                doc_ref = self.db.collection('usuarios').add(datos_usuario)
+            
+            return True, "Usuario registrado con éxito", datos_usuario
+            
+        except Exception as e:
+            return False, f"Error al registrar usuario: {str(e)}", None
+    
+    def _registrar_usuario_local(self, email: str, password: str, 
+                                 nombre: str, via_google: bool) -> Tuple[bool, str, Optional[Dict]]:
+        """
+        Registra un usuario en el sistema local simulado.
+        
+        Args:
+            email, password, nombre, via_google: Datos del usuario
+            
+        Returns:
+            tuple: (éxito, mensaje, datos_usuario)
+        """
+        try:
+            # Cargar usuarios existentes
+            with open('data/usuarios.json', 'r', encoding='utf-8') as f:
+                usuarios = json.load(f)
+            
+            # Verificar si el email ya existe
+            if any(u["email"] == email for u in usuarios):
+                return False, "Este email ya está registrado en el sistema", None
+            
+            # Generar uid único
+            uid = str(uuid.uuid4())
+            
+            # Hash de la contraseña (si no es vía Google)
+            password_hash = None
+            if not via_google:
+                salt = secrets.token_hex(8)
+                password_hash = hashlib.sha256((password + salt).encode()).hexdigest()
+            
+            # Crear nuevo usuario
+            nuevo_usuario = {
+                "uid": uid,
+                "email": email,
+                "nombre": nombre,
+                "fecha_registro": datetime.datetime.now().isoformat(),
+                "via_google": via_google,
+                "password_hash": password_hash,
+                "salt": salt if not via_google else None,
+                "acepta_terminos": True,
+                "verificado_cliente": False,
+                "nivel": 1,
+                "puntos": 0,
+                "comentarios": []
+            }
+            
+            # Añadir a la lista
+            usuarios.append(nuevo_usuario)
+            
+            # Guardar lista actualizada
+            with open('data/usuarios.json', 'w', encoding='utf-8') as f:
+                json.dump(usuarios, f, indent=4)
+            
+            # Eliminar datos sensibles para retorno
+            user_data = nuevo_usuario.copy()
+            if "password_hash" in user_data:
+                del user_data["password_hash"]
+            if "salt" in user_data:
+                del user_data["salt"]
+            
+            return True, "Usuario registrado con éxito", user_data
+            
+        except Exception as e:
+            return False, f"Error al registrar usuario: {str(e)}", None
+    
+    def iniciar_sesion(self, email: str, password: str, 
+                       via_google: bool = False) -> Tuple[bool, str, Optional[Dict]]:
+        """
+        Inicia sesión de un usuario existente.
+        
+        Args:
+            email (str): Email del usuario
+            password (str): Contraseña (no se usa si via_google=True)
+            via_google (bool): Si el inicio de sesión es mediante Google
+            
+        Returns:
+            tuple: (éxito, mensaje, datos_sesion)
+        """
+        if self.modo == "firebase":
+            return self._iniciar_sesion_firebase(email, password, via_google)
+        else:
+            return self._iniciar_sesion_local(email, password, via_google)
+    
+    def _iniciar_sesion_firebase(self, email: str, password: str, 
+                                via_google: bool) -> Tuple[bool, str, Optional[Dict]]:
+        """
+        Inicia sesión utilizando Firebase Authentication.
+        
+        Args:
+            email, password, via_google: Datos de inicio de sesión
+            
+        Returns:
+            tuple: (éxito, mensaje, datos_sesion)
+        """
+        try:
+            # En una implementación real, la autenticación se haría en el frontend
+            # Este es un ejemplo de verificación en el backend
+            
+            # Verificar si el usuario existe
+            try:
+                usuario = auth.get_user_by_email(email)
+            except:
+                return False, "Usuario no encontrado", None
+            
+            # Obtenemos datos del usuario desde Firestore
+            usuario_doc = self.db.collection('usuarios').document(usuario.uid).get()
+            
+            if not usuario_doc.exists:
+                return False, "Datos de usuario no encontrados", None
+                
+            datos_usuario = usuario_doc.to_dict()
+            
+            # Generar token de sesión (en una implementación real, Firebase genera tokens JWT)
+            token_sesion = str(uuid.uuid4())
+            
+            # Datos de sesión
+            sesion = {
+                "uid": usuario.uid,
+                "email": email,
+                "nombre": datos_usuario.get("nombre"),
+                "token": token_sesion,
+                "fecha_inicio": datetime.datetime.now().isoformat(),
+                "activa": True
+            }
+            
+            return True, "Inicio de sesión exitoso", sesion
+            
+        except Exception as e:
+            return False, f"Error al iniciar sesión: {str(e)}", None
+    
+    def _iniciar_sesion_local(self, email: str, password: str, 
+                             via_google: bool) -> Tuple[bool, str, Optional[Dict]]:
+        """
+        Inicia sesión en el sistema local simulado.
+        
+        Args:
+            email, password, via_google: Datos de inicio de sesión
+            
+        Returns:
+            tuple: (éxito, mensaje, datos_sesion)
+        """
+        try:
+            # Cargar usuarios
+            with open('data/usuarios.json', 'r', encoding='utf-8') as f:
+                usuarios = json.load(f)
+            
+            # Buscar el usuario por email
+            usuario = None
+            for u in usuarios:
+                if u["email"] == email:
+                    usuario = u
+                    break
+            
+            if not usuario:
+                return False, "Usuario no encontrado", None
+            
+            # Verificar credenciales
+            if not via_google:
+                # Verificar contraseña
+                salt = usuario.get("salt", "")
+                password_hash = hashlib.sha256((password + salt).encode()).hexdigest()
+                
+                if password_hash != usuario.get("password_hash"):
+                    return False, "Contraseña incorrecta", None
+            else:
+                # Para Google, verificamos que la cuenta esté marcada como Google
+                if not usuario.get("via_google", False):
+                    return False, "Esta cuenta no está registrada con Google", None
+            
+            # Cargar sesiones existentes
+            with open('data/sesiones.json', 'r', encoding='utf-8') as f:
+                sesiones = json.load(f)
+            
+            # Crear nueva sesión
+            token_sesion = str(uuid.uuid4())
+            
+            nueva_sesion = {
+                "uid": usuario["uid"],
+                "email": email,
+                "nombre": usuario["nombre"],
+                "token": token_sesion,
+                "fecha_inicio": datetime.datetime.now().isoformat(),
+                "activa": True
+            }
+            
+            # Añadir a lista de sesiones
+            sesiones.append(nueva_sesion)
+            
+            # Guardar sesiones actualizadas
+            with open('data/sesiones.json', 'w', encoding='utf-8') as f:
+                json.dump(sesiones, f, indent=4)
+            
+            return True, "Inicio de sesión exitoso", nueva_sesion
+            
+        except Exception as e:
+            return False, f"Error al iniciar sesión: {str(e)}", None
+    
+    def cerrar_sesion(self, token: str) -> Tuple[bool, str]:
+        """
+        Cierra la sesión de un usuario.
+        
+        Args:
+            token (str): Token de sesión a cerrar
+            
+        Returns:
+            tuple: (éxito, mensaje)
+        """
+        if self.modo == "firebase":
+            # En Firebase, la gestión de tokens se maneja automáticamente
+            # Este método es principalmente para compatibilidad con modo local
+            return True, "Sesión cerrada con éxito"
+        else:
+            try:
+                # Cargar sesiones
+                with open('data/sesiones.json', 'r', encoding='utf-8') as f:
+                    sesiones = json.load(f)
+                
+                # Buscar y actualizar la sesión
+                sesion_encontrada = False
+                for sesion in sesiones:
+                    if sesion["token"] == token and sesion["activa"]:
+                        sesion["activa"] = False
+                        sesion_encontrada = True
+                        break
+                
+                if not sesion_encontrada:
+                    return False, "Sesión no encontrada o ya cerrada"
+                
+                # Guardar sesiones actualizadas
+                with open('data/sesiones.json', 'w', encoding='utf-8') as f:
+                    json.dump(sesiones, f, indent=4)
+                
+                return True, "Sesión cerrada con éxito"
+                
+            except Exception as e:
+                return False, f"Error al cerrar sesión: {str(e)}"
+    
+    def verificar_sesion(self, token: str) -> Tuple[bool, Optional[Dict]]:
+        """
+        Verifica si una sesión es válida y retorna datos del usuario.
+        
+        Args:
+            token (str): Token de sesión a verificar
+            
+        Returns:
+            tuple: (sesión_válida, datos_usuario)
+        """
+        if self.modo == "firebase":
+            # En Firebase, la verificación se haría con el token JWT
+            # Esta es una implementación simplificada
+            try:
+                # Verificar el token y extraer UID
+                # Nota: Esta es una simulación - en una implementación real 
+                # usaríamos auth.verify_id_token(token)
+                uid = token  # Asumimos que se pasa el UID como token para simplificar
+                
+                # Obtener datos del usuario
+                usuario_doc = self.db.collection('usuarios').document(uid).get()
+                
+                if not usuario_doc.exists:
+                    return False, None
+                
+                return True, usuario_doc.to_dict()
+                
+            except Exception as e:
+                print(f"Error al verificar sesión: {e}")
+                return False, None
+        else:
+            try:
+                # Cargar sesiones
+                with open('data/sesiones.json', 'r', encoding='utf-8') as f:
+                    sesiones = json.load(f)
+                
+                # Buscar sesión activa con el token
+                sesion = None
+                for s in sesiones:
+                    if s["token"] == token and s.get("activa", False):
+                        sesion = s
+                        break
+                
+                if not sesion:
+                    return False, None
+                
+                # Cargar usuarios
+                with open('data/usuarios.json', 'r', encoding='utf-8') as f:
+                    usuarios = json.load(f)
+                
+                # Buscar usuario correspondiente
+                usuario = None
+                for u in usuarios:
+                    if u["uid"] == sesion["uid"]:
+                        usuario = u
+                        break
+                
+                if not usuario:
+                    return False, None
+                
+                # Eliminar datos sensibles
+                if "password_hash" in usuario:
+                    del usuario["password_hash"]
+                if "salt" in usuario:
+                    del usuario["salt"]
+                
+                return True, usuario
+                
+            except Exception as e:
+                print(f"Error al verificar sesión: {e}")
+                return False, None
+    
+    def obtener_usuario(self, uid: str) -> Optional[Dict]:
+        """
+        Obtiene datos de un usuario por su UID.
+        
+        Args:
+            uid (str): UID del usuario
+            
+        Returns:
+            dict: Datos del usuario o None si no se encuentra
+        """
+        if self.modo == "firebase":
+            try:
+                usuario_doc = self.db.collection('usuarios').document(uid).get()
+                
+                if not usuario_doc.exists:
+                    return None
+                
+                return usuario_doc.to_dict()
+                
+            except Exception as e:
+                print(f"Error al obtener usuario: {e}")
+                return None
+        else:
+            try:
+                # Cargar usuarios
+                with open('data/usuarios.json', 'r', encoding='utf-8') as f:
+                    usuarios = json.load(f)
+                
+                # Buscar por UID
+                for usuario in usuarios:
+                    if usuario["uid"] == uid:
+                        # Eliminar datos sensibles
+                        user_data = usuario.copy()
+                        if "password_hash" in user_data:
+                            del user_data["password_hash"]
+                        if "salt" in user_data:
+                            del user_data["salt"]
+                        
+                        return user_data
+                
+                return None
+                
+            except Exception as e:
+                print(f"Error al obtener usuario: {e}")
+                return None
+    
+    def actualizar_usuario(self, uid: str, datos: Dict) -> Tuple[bool, str]:
+        """
+        Actualiza datos de un usuario existente.
+        
+        Args:
+            uid (str): UID del usuario a actualizar
+            datos (dict): Nuevos datos para actualizar
+            
+        Returns:
+            tuple: (éxito, mensaje)
+        """
+        # No permitir actualizar ciertos campos sensibles
+        campos_prohibidos = ["uid", "email", "password_hash", "salt", "via_google"]
+        datos_filtrados = {k: v for k, v in datos.items() if k not in campos_prohibidos}
+        
+        if self.modo == "firebase":
+            try:
+                # Actualizar en Firestore
+                self.db.collection('usuarios').document(uid).update(datos_filtrados)
+                return True, "Usuario actualizado con éxito"
+                
+            except Exception as e:
+                return False, f"Error al actualizar usuario: {str(e)}"
+        else:
+            try:
+                # Cargar usuarios
+                with open('data/usuarios.json', 'r', encoding='utf-8') as f:
+                    usuarios = json.load(f)
+                
+                # Buscar y actualizar
+                usuario_encontrado = False
+                for i, usuario in enumerate(usuarios):
+                    if usuario["uid"] == uid:
+                        # Actualizar campos permitidos
+                        for key, value in datos_filtrados.items():
+                            usuarios[i][key] = value
+                        
+                        usuario_encontrado = True
+                        break
+                
+                if not usuario_encontrado:
+                    return False, "Usuario no encontrado"
+                
+                # Guardar usuarios actualizados
+                with open('data/usuarios.json', 'w', encoding='utf-8') as f:
+                    json.dump(usuarios, f, indent=4)
+                
+                return True, "Usuario actualizado con éxito"
+                
+            except Exception as e:
+                return False, f"Error al actualizar usuario: {str(e)}"
+    
+    def agregar_comentario_usuario(self, uid: str, comentario: Dict) -> Tuple[bool, str]:
+        """
+        Agrega un comentario al historial de un usuario.
+        
+        Args:
+            uid (str): UID del usuario
+            comentario (dict): Datos del comentario a agregar
+            
+        Returns:
+            tuple: (éxito, mensaje)
+        """
+        if self.modo == "firebase":
+            try:
+                # Obtener referencia al documento del usuario
+                usuario_ref = self.db.collection('usuarios').document(uid)
+                
+                # Obtener datos actuales
+                usuario_doc = usuario_ref.get()
+                
+                if not usuario_doc.exists:
+                    return False, "Usuario no encontrado"
+                
+                usuario_data = usuario_doc.to_dict()
+                
+                # Actualizar array de comentarios
+                comentarios = usuario_data.get("comentarios", [])
+                comentarios.append(comentario)
+                
+                # Actualizar puntos del usuario
+                puntos_actuales = usuario_data.get("puntos", 0)
+                nuevo_puntos = puntos_actuales + 5  # 5 puntos por comentario
+                
+                # Actualizar nivel si es necesario
+                nivel_actual = usuario_data.get("nivel", 1)
+                nuevo_nivel = nivel_actual
+                
+                if nuevo_puntos >= 100 and nivel_actual == 1:
+                    nuevo_nivel = 2
+                elif nuevo_puntos >= 300 and nivel_actual == 2:
+                    nuevo_nivel = 3
+                elif nuevo_puntos >= 1000 and nivel_actual == 3:
+                    nuevo_nivel = 4
+                
+                # Actualizar en Firestore
+                usuario_ref.update({
+                    "comentarios": comentarios,
+                    "puntos": nuevo_puntos,
+                    "nivel": nuevo_nivel
+                })
+                
+                return True, "Comentario agregado con éxito"
+                
+            except Exception as e:
+                return False, f"Error al agregar comentario: {str(e)}"
+        else:
+            try:
+                # Cargar usuarios
+                with open('data/usuarios.json', 'r', encoding='utf-8') as f:
+                    usuarios = json.load(f)
+                
+                # Buscar usuario
+                usuario_encontrado = False
+                for i, usuario in enumerate(usuarios):
+                    if usuario["uid"] == uid:
+                        # Agregar comentario
+                        if "comentarios" not in usuario:
+                            usuarios[i]["comentarios"] = []
+                        
+                        usuarios[i]["comentarios"].append(comentario)
+                        
+                        # Actualizar puntos
+                        puntos_actuales = usuario.get("puntos", 0)
+                        usuarios[i]["puntos"] = puntos_actuales + 5
+                        
+                        # Actualizar nivel si es necesario
+                        nivel_actual = usuario.get("nivel", 1)
+                        nuevo_puntos = puntos_actuales + 5
+                        
+                        if nuevo_puntos >= 100 and nivel_actual == 1:
+                            usuarios[i]["nivel"] = 2
+                        elif nuevo_puntos >= 300 and nivel_actual == 2:
+                            usuarios[i]["nivel"] = 3
+                        elif nuevo_puntos >= 1000 and nivel_actual == 3:
+                            usuarios[i]["nivel"] = 4
+                        
+                        usuario_encontrado = True
+                        break
+                
+                if not usuario_encontrado:
+                    return False, "Usuario no encontrado"
+                
+                # Guardar usuarios actualizados
+                with open('data/usuarios.json', 'w', encoding='utf-8') as f:
+                    json.dump(usuarios, f, indent=4)
+                
+                return True, "Comentario agregado con éxito"
+                
+            except Exception as e:
+                return False, f"Error al agregar comentario: {str(e)}"
+    
+    def _validar_email(self, email: str) -> bool:
+        """
+        Valida formato de email.
+        
+        Args:
+            email (str): Email a validar
+            
+        Returns:
+            bool: True si es válido
+        """
+        patron = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+        return bool(re.match(patron, email))
+    
+    def _validar_password(self, password: str) -> bool:
+        """
+        Valida si la contraseña cumple requisitos mínimos.
+        
+        Args:
+            password (str): Contraseña a validar
+            
+        Returns:
+            bool: True si cumple los requisitos
+        """
+        # Mínimo 8 caracteres, al menos una letra y un número
+        if len(password) < 8:
+            return False
+        
+        tiene_letra = any(c.isalpha() for c in password)
+        tiene_numero = any(c.isdigit() for c in password)
+        
+        return tiene_letra and tiene_numero
+
+# Funciones auxiliares para la integración con Flask
+
+def obtener_usuario_sesion(auth_handler, request):
+    """
+    Obtiene el usuario actual de la sesión.
+    
+    Args:
+        auth_handler: Instancia de AutenticacionUsuarios
+        request: Objeto request de Flask
+    
+    Returns:
+        tuple: (usuario_logueado, datos_usuario)
+    """
+    # Obtener token de sesión de cookies
+    token = request.cookies.get('session_token')
+    
+    if not token:
+        return False, None
+    
+    # Verificar sesión
+    sesion_valida, usuario = auth_handler.verificar_sesion(token)
+    
+    return sesion_valida, usuario
+
+# Ejemplo de uso
+if __name__ == "__main__":
+    # Crear instancia (por defecto en modo local)
+    auth = AutenticacionUsuarios()
+    
+    # Registrar un usuario de prueba
+    exito, mensaje, usuario = auth.registrar_usuario(
+        email="usuario@ejemplo.com",
+        password="Contraseña123",
+        nombre="Usuario de Prueba",
+        acepta_terminos=True
+    )
+    
+    print(f"Registro: {mensaje}")
+    if exito:
+        print(f"Usuario creado: {usuario['nombre']} ({usuario['email']})")
+        
+        # Iniciar sesión
+        exito_login, mensaje_login, sesion = auth.iniciar_sesion(
+            email="usuario@ejemplo.com",
+            password="Contraseña123"
+        )
+        
+        if exito_login:
+            print(f"Inicio de sesión exitoso: {sesion['token']}")
+        else:
+            print(f"Error al iniciar sesión: {mensaje_login}")
