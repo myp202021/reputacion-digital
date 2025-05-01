@@ -1,0 +1,480 @@
+"""
+Archivos estáticos para la aplicación web colaborativa (CSS y JavaScript).
+Estos archivos deben guardarse en la carpeta 'static' del proyecto.
+"""
+
+# static/css/style.css - Estilos personalizados
+"""
+/* Estilos generales */
+:root {
+    --primary-color: #0d6efd;
+    --secondary-color: #6c757d;
+    --success-color: #198754;
+    --info-color: #0dcaf0;
+    --warning-color: #ffc107;
+    --danger-color: #dc3545;
+    --light-color: #f8f9fa;
+    --dark-color: #212529;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    color: #333;
+    background-color: #f5f5f5;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+main {
+    flex: 1 0 auto;
+}
+
+/* Navbar personalizada */
+.navbar {
+    padding: 0.75rem 1rem;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.navbar-brand {
+    font-weight: 600;
+    font-size: 1.5rem;
+}
+
+/* Cards con sombras y bordes redondeados */
+.card {
+    border-radius: 0.5rem;
+    border: none;
+    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+    margin-bottom: 1.5rem;
+    overflow: hidden;
+}
+
+.card-header {
+    background-color: #fff;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.125);
+    padding: 1rem 1.25rem;
+}
+
+/* Estilos para índices de reputación */
+.reputation-score {
+    position: relative;
+    width: 150px;
+    height: 150px;
+    margin: 0 auto;
+}
+
+.reputation-score svg {
+    width: 100%;
+    height: 100%;
+}
+
+.reputation-score circle {
+    transition: stroke-dasharray 0.5s ease;
+}
+
+/* Estilos para rating con estrellas */
+.rating-star {
+    cursor: pointer;
+    transition: color 0.2s ease;
+}
+
+.rating-star:hover {
+    color: #ffc107;
+}
+
+/* Formateo de reseñas */
+.review-item {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.review-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+}
+
+.review-text {
+    font-size: 1rem;
+    line-height: 1.6;
+    white-space: pre-line;
+}
+
+/* Botón de votar reseñas */
+.vote-button {
+    transition: all 0.2s ease;
+}
+
+.vote-button:hover {
+    background-color: var(--primary-color);
+    color: white;
+}
+
+.vote-button:disabled {
+    background-color: var(--light-color);
+    color: var(--primary-color);
+    opacity: 0.7;
+}
+
+/* Estilos para búsqueda */
+.search-container {
+    padding: 2rem;
+    background-color: var(--light-color);
+    border-radius: 0.5rem;
+    margin-bottom: 2rem;
+}
+
+/* Etiquetas de niveles de usuario */
+.user-level {
+    margin: 1rem 0;
+}
+
+.level-info {
+    margin-bottom: 1rem;
+}
+
+/* Footer */
+.footer {
+    background-color: var(--light-color);
+    padding: 2rem 0;
+    margin-top: 3rem;
+}
+
+/* Animaciones */
+@keyframes pulse {
+    0% {
+        transform: scale(1);
+    }
+    50% {
+        transform: scale(1.05);
+    }
+    100% {
+        transform: scale(1);
+    }
+}
+
+.animate-pulse {
+    animation: pulse 1.5s infinite;
+}
+
+/* Media queries */
+@media (max-width: 768px) {
+    .reputation-score {
+        width: 120px;
+        height: 120px;
+    }
+    
+    .card-title {
+        font-size: 1.25rem;
+    }
+}
+
+/* Estilos específicos para la página de ranking */
+.table-hover tbody tr:hover {
+    background-color: rgba(13, 110, 253, 0.05);
+}
+
+/* Estilos para el formulario de reseñas */
+.rating-input {
+    margin-bottom: 1rem;
+}
+
+.rating-stars {
+    font-size: 2rem;
+    color: #dee2e6;
+}
+
+.rating-stars i {
+    margin-right: 0.25rem;
+    cursor: pointer;
+    transition: color 0.2s ease;
+}
+
+.rating-stars i:hover,
+.rating-stars i.active {
+    color: #ffc107;
+}
+
+/* Estilizar alertas */
+.alert {
+    border-radius: 0.5rem;
+    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+}
+
+/* Animación para elementos nuevos */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.fade-in {
+    animation: fadeIn 0.5s ease-out forwards;
+}
+"""
+
+# static/js/main.js - JavaScript principal
+"""
+/**
+ * Funciones principales para la aplicación web de reputación digital
+ */
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Mostrar/ocultar menús desplegables
+    const dropdowns = document.querySelectorAll('.dropdown-toggle');
+    dropdowns.forEach(dropdown => {
+        dropdown.addEventListener('click', function() {
+            const dropdownMenu = this.nextElementSibling;
+            if (dropdownMenu.classList.contains('show')) {
+                dropdownMenu.classList.remove('show');
+            } else {
+                // Cerrar otros dropdowns abiertos
+                document.querySelectorAll('.dropdown-menu.show').forEach(menu => {
+                    menu.classList.remove('show');
+                });
+                dropdownMenu.classList.add('show');
+            }
+        });
+    });
+
+    // Cerrar dropdowns al hacer clic fuera
+    document.addEventListener('click', function(event) {
+        if (!event.target.matches('.dropdown-toggle')) {
+            document.querySelectorAll('.dropdown-menu.show').forEach(menu => {
+                menu.classList.remove('show');
+            });
+        }
+    });
+
+    // Auto-cerrar alertas después de 5 segundos
+    const alerts = document.querySelectorAll('.alert:not(.alert-permanent)');
+    alerts.forEach(alert => {
+        setTimeout(() => {
+            const bsAlert = new bootstrap.Alert(alert);
+            bsAlert.close();
+        }, 5000);
+    });
+
+    // Inicializar tooltips (si se están usando)
+    const tooltips = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+    tooltips.forEach(tooltip => {
+        new bootstrap.Tooltip(tooltip);
+    });
+
+    // Validación de contraseñas en el formulario de registro
+    const password = document.getElementById('password');
+    const confirmPassword = document.getElementById('confirm_password');
+    
+    if (password && confirmPassword) {
+        function validatePassword() {
+            if (password.value !== confirmPassword.value) {
+                confirmPassword.setCustomValidity('Las contraseñas no coinciden');
+            } else {
+                confirmPassword.setCustomValidity('');
+            }
+        }
+        
+        password.addEventListener('change', validatePassword);
+        confirmPassword.addEventListener('keyup', validatePassword);
+    }
+
+    // Funcionalidad de rating con estrellas
+    const ratingStars = document.querySelectorAll('.rating-star');
+    const ratingInput = document.getElementById('rating');
+    
+    if (ratingStars.length > 0 && ratingInput) {
+        ratingStars.forEach(star => {
+            star.addEventListener('click', function() {
+                const rating = this.getAttribute('data-rating');
+                ratingInput.value = rating;
+                
+                // Actualizar estrellas
+                ratingStars.forEach(s => {
+                    if (s.getAttribute('data-rating') <= rating) {
+                        s.classList.remove('bi-star');
+                        s.classList.add('bi-star-fill');
+                        s.classList.add('text-warning');
+                    } else {
+                        s.classList.remove('bi-star-fill');
+                        s.classList.remove('text-warning');
+                        s.classList.add('bi-star');
+                    }
+                });
+            });
+        });
+    }
+
+    // Contador de palabras para textarea de reseñas
+    const textareaReview = document.getElementById('texto');
+    const wordCounter = document.getElementById('word-counter');
+    const submitButton = document.getElementById('submit-review');
+    
+    if (textareaReview && wordCounter) {
+        textareaReview.addEventListener('input', function() {
+            const text = this.value.trim();
+            const wordCount = text ? text.split(/\s+/).length : 0;
+            
+            wordCounter.textContent = `${wordCount} palabras (mínimo 20)`;
+            
+            if (wordCount < 20) {
+                wordCounter.classList.add('text-danger');
+                if (submitButton) submitButton.disabled = true;
+            } else {
+                wordCounter.classList.remove('text-danger');
+                if (submitButton) submitButton.disabled = false;
+            }
+        });
+    }
+
+    // Funcionalidad para reportar reseñas
+    const reportModal = document.getElementById('reportModal');
+    const reportButtons = document.querySelectorAll('.report-review-btn');
+    const reportReviewId = document.getElementById('reportReviewId');
+    const submitReportBtn = document.getElementById('submitReport');
+    
+    if (reportButtons.length > 0 && reportReviewId) {
+        reportButtons.forEach(button => {
+            button.addEventListener('click', function() {
+                const reviewId = this.getAttribute('data-review-id');
+                reportReviewId.value = reviewId;
+            });
+        });
+    }
+    
+    if (submitReportBtn) {
+        submitReportBtn.addEventListener('click', function() {
+            const reportForm = document.getElementById('reportForm');
+            const reason = document.getElementById('reportReason').value;
+            const details = document.getElementById('reportDetails').value;
+            
+            if (!reason || !details || details.length < 10) {
+                alert('Por favor complete todos los campos del reporte');
+                return;
+            }
+            
+            // Enviar reporte (formulario)
+            const formData = new FormData(reportForm);
+            
+            fetch(`/resena/${reportReviewId.value}/reportar`, {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.exito) {
+                    alert('Reporte enviado con éxito');
+                    
+                    // Cerrar modal
+                    const modal = bootstrap.Modal.getInstance(reportModal);
+                    modal.hide();
+                    
+                    // Limpiar formulario
+                    reportForm.reset();
+                } else {
+                    alert(data.mensaje);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error al enviar el reporte');
+            });
+        });
+    }
+
+    // Animar elementos al hacer scroll
+    const animateOnScroll = () => {
+        const elements = document.querySelectorAll('.animate-on-scroll');
+        
+        elements.forEach(element => {
+            const elementPosition = element.getBoundingClientRect().top;
+            const screenPosition = window.innerHeight / 1.2;
+            
+            if (elementPosition < screenPosition) {
+                element.classList.add('fade-in');
+                element.classList.remove('animate-on-scroll');
+            }
+        });
+    };
+    
+    window.addEventListener('scroll', animateOnScroll);
+    animateOnScroll(); // Ejecutar una vez al cargar para elementos visibles
+
+    // Gráficos de reputación SVG dinámicos
+    const reputationScores = document.querySelectorAll('.reputation-score');
+    
+    reputationScores.forEach(score => {
+        const circle = score.querySelector('circle:nth-child(2)');
+        const text = score.querySelector('text');
+        
+        if (circle && text) {
+            const value = parseFloat(text.textContent);
+            const circumference = 2 * Math.PI * 45; // r = 45
+            
+            // Animación del círculo
+            setTimeout(() => {
+                circle.style.strokeDasharray = `${(value / 100) * circumference} ${circumference}`;
+            }, 100);
+        }
+    });
+});
+
+/**
+ * Simula login con Google (solo para demostración)
+ * En una implementación real, se usaría la API de Google OAuth
+ */
+function simulateGoogleLogin() {
+    // Simulación de datos obtenidos de Google
+    const token = 'simulated_token_' + Math.random().toString(36).substring(2);
+    const email = 'usuario.google' + Math.floor(Math.random() * 1000) + '@gmail.com';
+    const nombre = 'Usuario Google';
+    
+    // Llenar campos ocultos del formulario
+    document.getElementById('google_token').value = token;
+    document.getElementById('email').value = email;
+    document.getElementById('nombre').value = nombre;
+    
+    // Enviar formulario
+    document.getElementById('google-form').submit();
+}
+
+/**
+ * Función para votar que una reseña es útil
+ * @param {string} reviewId - ID de la reseña
+ * @param {HTMLElement} buttonElement - Elemento del botón
+ */
+function voteReviewUseful(reviewId, buttonElement) {
+    // Verificar si el botón ya está deshabilitado
+    if (buttonElement.disabled) {
+        return;
+    }
+    
+    // Llamada AJAX para votar
+    fetch(`/resena/${reviewId}/votar`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.exito) {
+            // Deshabilitar botón e incrementar contador
+            buttonElement.disabled = true;
+            buttonElement.innerHTML = '<i class="bi bi-hand-thumbs-up-fill"></i> Útil';
+            
+            // Actualizar contador si existe
+            const voteCount = buttonElement.querySelector('span');
+            if (voteCount) {
+                const currentCount = parseInt(voteCount.textContent.replace(/[()]/g, ''));
+                voteCount.textContent = `(${currentCount + 1})`;
+            } else {
+                buttonElement.innerHTML += ' <span>(1)</span>';
+            }
+        } else {
+            alert(data.mensaje);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error al procesar su voto');
+    });
+}
+"""
