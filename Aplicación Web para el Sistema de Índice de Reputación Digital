@@ -1,0 +1,197 @@
+"""
+Aplicación Web para el Sistema de Índice de Reputación Digital
+==============================================================
+Este script implementa una interfaz web simple usando Flask para el 
+sistema de análisis de reputación digital de empresas chilenas.
+"""
+
+from flask import Flask, render_template, request, jsonify, redirect, url_for
+import os
+import json
+import plotly
+import pandas as pd
+from datetime import datetime
+from indice_reputacion_digital import IndiceReputacionDigital
+
+app = Flask(__name__)
+app.secret_key = "reputacion_digital_secret_key"
+
+# Asegurarse de que exista la carpeta para resultados
+if not os.path.exists('resultados'):
+    os.makedirs('resultados')
+
+# Ruta principal - Formulario de análisis
+@app.route('/', methods=['GET'])
+def index():
+    return render_template('index.html')
+
+# Ruta para procesar el análisis
+@app.route('/analizar', methods=['POST'])
+def analizar():
+    # Obtener datos del formulario
+    nombre_empresa = request.form.get('nombre_empresa')
+    region = request.form.get('region') or None
+    rubro = request.form.get('rubro') or None
+    
+    if not nombre_empresa:
+        return jsonify({
+            'error': True,
+            'mensaje': 'Debe ingresar el nombre de la empresa'
+        })
+    
+    # Crear instancia del analizador
+    analizador = IndiceReputacionDigital(nombre_empresa, region, rubro)
+    
+    try:
+        # Ejecutar el análisis
+        analizador.buscar_gmb()
+        analizador.buscar_reclamos()
+        analizador.buscar_noticias()
+        analizador.analizar_tendencia()
+        analizador.calcular_indice()
+        
+        # Generar gráficos con Plotly
+        graficos = analizador.generar_graficos_plotly()
+        
+        # Convertir gráficos a JSON
+        graficos_json = {
+            'composicion': json.loads(plotly.io.to_json(graficos['composicion'])),
+            'evolucion': json.loads(plotly.io.to_json(graficos['evolucion'])),
+            'subindices': json.loads(plotly.io.to_json(graficos['subindices']))
+        }
+        
+        # Preparar datos para la plantilla
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        id_analisis = f"{nombre_empresa.replace(' ', '_')}_{timestamp}"
+        
+        # Guardar resultados
+        resultados = {
+            'id': id_analisis,
+            'empresa': nombre_empresa,
+            'region': region,
+            'rubro': rubro,
+            'fecha': datetime.now().strftime('%d/%m/%Y %H:%M:%S'),
+            'indice_final': analizador.indice_final,
+            'subindices': analizador.subindices,
+            'alertas': analizador.alertas,
+            'comentarios_destacados': analizador.comentarios_destacados,
+            'graficos': graficos_json
+        }
+        
+        # Guardar en archivo
+        with open(f'resultados/{id_analisis}.json', 'w', encoding='utf-8') as f:
+            json.dump(resultados, f, ensure_ascii=False, indent=4)
+        
+        # Redireccionar a la página de resultados
+        return redirect(url_for('mostrar_resultados', id_analisis=id_analisis))
+        
+    except Exception as e:
+        return jsonify({
+            'error': True,
+            'mensaje': f'Error en el análisis: {str(e)}'
+        })
+
+# Ruta para mostrar resultados
+@app.route('/resultados/<id_analisis>', methods=['GET'])
+def mostrar_resultados(id_analisis):
+    try:
+        # Cargar resultados del archivo
+        with open(f'resultados/{id_analisis}.json', 'r', encoding='utf-8') as f:
+            resultados = json.load(f)
+        
+        return render_template('resultados.html', resultados=resultados)
+        
+    except Exception as e:
+        return render_template('error.html', mensaje=f'Error al cargar resultados: {str(e)}')
+
+# Ruta para exportar resultados
+@app.route('/exportar/<id_analisis>/<formato>', methods=['GET'])
+def exportar(id_analisis, formato):
+    try:
+        # Cargar resultados
+        with open(f'resultados/{id_analisis}.json', 'r', encoding='utf-8') as f:
+            resultados = json.load(f)
+        
+        # Nombre de archivo
+        nombre_archivo = f"reputacion_{resultados['empresa'].replace(' ', '_')}.{formato}"
+        
+        if formato == 'json':
+            # Exportar como JSON
+            return jsonify(resultados)
+            
+        elif formato == 'csv':
+            # Exportar como CSV
+            # Crear DataFrame para datos generales
+            df_general = pd.DataFrame({
+                'Empresa': [resultados['empresa']],
+                'Region': [resultados['region'] or ''],
+                'Rubro': [resultados['rubro'] or ''],
+                'Fecha_Analisis': [resultados['fecha']],
+                'Indice_Final': [resultados['indice_final']]
+            })
+            
+            # Crear DataFrame para subíndices
+            items = [(k, v) for k, v in resultados['subindices'].items()]
+            df_subindices = pd.DataFrame(items, columns=['Subindice', 'Valor'])
+            
+            # Crear DataFrame para alertas
+            if resultados['alertas']:
+                df_alertas = pd.DataFrame(resultados['alertas'])
+            else:
+                df_alertas = pd.DataFrame(columns=['tipo', 'descripcion', 'nivel'])
+            
+            # Combinar en un solo CSV
+            csv_content = df_general.to_csv(index=False) + "\n\n"
+            csv_content += "SUBINDICES\n" + df_subindices.to_csv(index=False) + "\n\n"
+            csv_content += "ALERTAS\n" + df_alertas.to_csv(index=False)
+            
+            # Crear respuesta
+            response = Response(
+                csv_content,
+                mimetype="text/csv",
+                headers={"Content-disposition": f"attachment; filename={nombre_archivo}"}
+            )
+            
+            return response
+            
+        else:
+            return jsonify({
+                'error': True,
+                'mensaje': f'Formato no soportado: {formato}'
+            })
+            
+    except Exception as e:
+        return jsonify({
+            'error': True,
+            'mensaje': f'Error al exportar: {str(e)}'
+        })
+
+# Ruta para historial de análisis
+@app.route('/historial', methods=['GET'])
+def historial():
+    # Listar archivos de resultados
+    resultados = []
+    
+    try:
+        for archivo in os.listdir('resultados'):
+            if archivo.endswith('.json'):
+                with open(f'resultados/{archivo}', 'r', encoding='utf-8') as f:
+                    datos = json.load(f)
+                    resultados.append({
+                        'id': datos.get('id'),
+                        'empresa': datos.get('empresa'),
+                        'fecha': datos.get('fecha'),
+                        'indice': datos.get('indice_final')
+                    })
+        
+        # Ordenar por fecha (más reciente primero)
+        resultados.sort(key=lambda x: x['fecha'], reverse=True)
+        
+        return render_template('historial.html', resultados=resultados)
+        
+    except Exception as e:
+        return render_template('error.html', mensaje=f'Error al cargar historial: {str(e)}')
+
+# Ejecutar la aplicación
+if __name__ == '__main__':
+    app.run(debug=True, host='0.0.0.0', port=5000)
