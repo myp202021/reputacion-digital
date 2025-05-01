@@ -1,0 +1,327 @@
+# Instrucciones de Despliegue
+# Sistema de Índice de Reputación Digital para Empresas Chilenas
+
+Este documento proporciona instrucciones detalladas para desplegar y utilizar el Sistema de Índice de Reputación Digital para Empresas Chilenas, en diferentes entornos: local, Firebase y GitHub Codespaces.
+
+## 📋 Contenido
+
+1. [Requisitos previos](#requisitos-previos)
+2. [Instalación local](#instalación-local)
+3. [Despliegue en Firebase](#despliegue-en-firebase)
+4. [Configuración en GitHub Codespaces](#configuración-en-github-codespaces)
+5. [Uso del sistema](#uso-del-sistema)
+6. [Personalización y expansión](#personalización-y-expansión)
+7. [Solución de problemas comunes](#solución-de-problemas-comunes)
+
+## Requisitos previos
+
+Para utilizar el sistema, necesitarás:
+
+- Python 3.8 o superior
+- Pip (gestor de paquetes de Python)
+- Git (opcional, para clonar el repositorio)
+- Cuenta de Firebase (para despliegue en la nube)
+- Cuenta de GitHub (para usar Codespaces)
+
+## Instalación local
+
+### 1. Clonar o descargar el repositorio
+
+```bash
+git clone https://github.com/tuusuario/indice-reputacion-digital.git
+cd indice-reputacion-digital
+```
+
+### 2. Crear un entorno virtual (recomendado)
+
+```bash
+python -m venv venv
+# Activar en Windows
+venv\Scripts\activate
+# Activar en macOS/Linux
+source venv/bin/activate
+```
+
+### 3. Instalar dependencias
+
+```bash
+pip install -r requirements.txt
+```
+
+El archivo `requirements.txt` debe contener:
+
+```
+flask==2.3.3
+pandas==2.1.0
+numpy==1.24.3
+matplotlib==3.7.2
+seaborn==0.12.2
+plotly==5.16.1
+transformers==4.34.0
+requests==2.31.0
+beautifulsoup4==4.12.2
+tqdm==4.66.1
+fake-useragent==1.2.1
+firebase-admin==6.2.0
+```
+
+### 4. Ejecutar localmente
+
+#### 4.1 Modo consola (línea de comandos)
+
+```bash
+python -m indice_reputacion_digital
+```
+
+Esto iniciará el programa en modo interactivo donde podrás ingresar el nombre de la empresa a analizar.
+
+#### 4.2 Modo servidor web (Flask)
+
+```bash
+python -m app_web
+```
+
+Esto iniciará el servidor web en http://localhost:5000 donde podrás acceder a la interfaz web del sistema.
+
+## Despliegue en Firebase
+
+### 1. Configurar Firebase
+
+1. Crear un proyecto en [Firebase Console](https://console.firebase.google.com/)
+2. Activar Firestore Database
+3. Activar Storage
+4. Configurar Cloud Functions (requiere plan Blaze)
+5. Descargar archivo de credenciales de administrador (`firebase-credentials.json`)
+
+### 2. Configurar Firebase CLI
+
+```bash
+npm install -g firebase-tools
+firebase login
+firebase init
+```
+
+Selecciona los siguientes servicios:
+- Firestore
+- Functions
+- Storage
+- Hosting
+
+### 3. Estructura del proyecto para Firebase
+
+```
+└── proyecto-reputacion-digital/
+    ├── public/              # Archivos estáticos para hosting
+    │   ├── index.html       # Página principal
+    │   ├── css/             # Estilos CSS
+    │   └── js/              # JavaScript del frontend
+    ├── functions/           # Cloud Functions
+    │   ├── main.py          # Endpoints HTTP
+    │   ├── indice_reputacion_digital.py  # Código principal
+    │   └── requirements.txt  # Dependencias
+    └── firebase.json        # Configuración de Firebase
+```
+
+### 4. Desplegar en Firebase
+
+```bash
+firebase deploy
+```
+
+## Configuración en GitHub Codespaces
+
+### 1. Crear un repositorio en GitHub
+
+Sube todos los archivos del sistema a un repositorio GitHub.
+
+### 2. Configurar Codespaces
+
+1. Desde el repositorio en GitHub, haz clic en el botón "Code" y selecciona "Open with Codespaces"
+2. Haz clic en "New codespace"
+
+### 3. Configurar el entorno
+
+El repositorio debe incluir un archivo `.devcontainer/devcontainer.json` con la configuración necesaria:
+
+```json
+{
+  "name": "Indice Reputacion Digital",
+  "image": "mcr.microsoft.com/devcontainers/python:3.10",
+  "forwardPorts": [5000],
+  "postCreateCommand": "pip install -r requirements.txt",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance"
+      ]
+    }
+  }
+}
+```
+
+### 4. Ejecutar en Codespaces
+
+Una vez creado el Codespace, abre una terminal y ejecuta:
+
+```bash
+python -m app_web
+```
+
+Codespaces automáticamente abrirá un puerto forwarding para que puedas acceder al servidor web.
+
+## Uso del sistema
+
+### Interfaz Web
+
+1. Accede a la aplicación web (local: http://localhost:5000 o Firebase: tu-proyecto.web.app)
+2. En la página principal, ingresa:
+   - Nombre de la empresa a analizar
+   - Región (opcional)
+   - Rubro (opcional)
+3. Haz clic en "Analizar Reputación"
+4. Espera a que se complete el análisis (puede tardar unos minutos)
+5. Explora los resultados:
+   - Índice de reputación (0-100)
+   - Gráficos interactivos 
+   - Comentarios destacados
+   - Alertas de riesgo
+
+### API (para desarrolladores)
+
+Si has desplegado el sistema en Firebase Functions, puedes usar la API REST:
+
+**Endpoint:** `https://us-central1-tu-proyecto.cloudfunctions.net/analizar_empresa`
+
+**Método:** POST
+
+**Body:**
+```json
+{
+  "nombre_empresa": "Falabella",
+  "region": "Metropolitana",
+  "rubro": "Retail"
+}
+```
+
+**Respuesta:**
+```json
+{
+  "error": false,
+  "mensaje": "Análisis completado con éxito",
+  "id": "falabella_20250430_123045",
+  "indice_final": 76.42,
+  "url_resultados": "https://tu-proyecto.web.app/resultados/falabella_20250430_123045"
+}
+```
+
+## Personalización y expansión
+
+### Ajustar las ponderaciones
+
+Para modificar las ponderaciones de los componentes del índice, edita el diccionario `CONFIG` en el archivo `indice_reputacion_digital.py`:
+
+```python
+CONFIG = {
+    "ponderaciones": {
+        "rating_gmb": 0.30,          # Cambiar a 0.25
+        "volumen_comentarios": 0.10,  # Cambiar a 0.15
+        "sentimiento_foros": 0.20,    # Mantener igual
+        "sentimiento_noticias": 0.30, # Mantener igual
+        "tendencia_reciente": 0.10    # Mantener igual
+    },
+    # ...
+}
+```
+
+### Agregar nuevas fuentes de datos
+
+Para agregar una nueva fuente de datos (por ejemplo, LinkedIn):
+
+1. Crear una nueva función en `indice_reputacion_digital.py`:
+
+```python
+def buscar_linkedin(self):
+    """
+    Busca menciones de la empresa en LinkedIn.
+    
+    Returns:
+        dict: Información recopilada de LinkedIn
+    """
+    print(f"Consultando LinkedIn para: {self.nombre_empresa}")
+    
+    # Implementar scraping o simulación de LinkedIn
+    resultado_linkedin = {
+        "total_menciones": 0,
+        "menciones_positivas": 0,
+        "menciones_neutras": 0,
+        "menciones_negativas": 0,
+        "comentarios": []
+    }
+    
+    # Lógica de extracción...
+    
+    # Guardar en datos
+    self.datos["linkedin"] = resultado_linkedin
+    
+    return self.datos["linkedin"]
+```
+
+2. Modificar la función `calcular_indice()` para incluir esta nueva fuente
+3. Actualizar las ponderaciones en `CONFIG`
+
+### Mejorar el análisis de sentimiento
+
+Para mejorar el análisis de sentimiento, puedes:
+
+1. Usar un modelo específico para español de Hugging Face:
+
+```python
+# En __init__:
+self.sentiment_analyzer = pipeline(
+    "sentiment-analysis", 
+    model="finiteautomata/beto-sentiment-analysis"
+)
+```
+
+2. Implementar tu propio clasificador con scikit-learn
+
+## Solución de problemas comunes
+
+### Error: No se puede cargar el modelo de transformers
+
+**Problema:** `No se pudo cargar el modelo transformer. Usando solución alternativa.`
+
+**Solución:** Instalar las dependencias correctas y asegurarse de tener suficiente memoria RAM:
+
+```bash
+pip install torch==2.0.1 transformers==4.34.0
+```
+
+### Error: No se puede conectar a Firebase
+
+**Problema:** `Error al inicializar Firebase: [Firebase error]`
+
+**Solución:** 
+1. Verifica que el archivo de credenciales (`firebase-credentials.json`) esté en la ubicación correcta
+2. Asegúrate de tener los permisos adecuados en el proyecto Firebase
+3. Verifica la conexión a internet
+
+### Error: Timeout en la interfaz web
+
+**Problema:** La interfaz web se queda cargando sin completar el análisis
+
+**Solución:**
+1. Incrementa el tiempo de timeout en la configuración de Flask:
+
+```python
+app.config['TIMEOUT'] = 300  # 5 minutos
+```
+
+2. Considera implementar un sistema de análisis en segundo plano con tareas asíncronas (Celery o Cloud Functions)
+
+---
+
+Para cualquier pregunta adicional o soporte, contacta al equipo de desarrollo o reporta un issue en el repositorio GitHub.
+
+¡Disfruta utilizando el Sistema de Índice de Reputación Digital!
