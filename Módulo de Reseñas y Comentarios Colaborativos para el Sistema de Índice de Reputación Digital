@@ -1,0 +1,1426 @@
+"""
+Módulo de Reseñas y Comentarios Colaborativos para el Sistema de Índice de Reputación Digital
+============================================================================================
+Este módulo proporciona funcionalidades para gestionar reseñas y comentarios de usuarios
+sobre empresas, incluyendo validación, almacenamiento y análisis de sentimiento.
+"""
+
+import os
+import json
+import datetime
+import uuid
+from typing import Dict, List, Optional, Any, Tuple, Union
+import re
+import nltk
+from nltk.corpus import stopwords
+import string
+
+# Intentar importar Firebase
+try:
+    import firebase_admin
+    from firebase_admin import firestore
+    FIREBASE_AVAILABLE = True
+except ImportError:
+    FIREBASE_AVAILABLE = False
+
+# Intentar importar el analizador de sentimiento
+try:
+    from transformers import pipeline
+    TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    TRANSFORMERS_AVAILABLE = False
+
+class GestionReseñas:
+    """
+    Clase para manejar la gestión de reseñas y comentarios de usuarios.
+    Permite crear, validar, almacenar y analizar reseñas.
+    """
+    
+    def __init__(self, modo: str = "local", firebase_db=None, sentiment_analyzer=None):
+        """
+        Inicializa el sistema de gestión de reseñas.
+        
+        Args:
+            modo (str): "firebase" o "local" para determinar el backend de almacenamiento.
+            firebase_db: Instancia de Firestore si ya está inicializada.
+            sentiment_analyzer: Analizador de sentimiento preconfigurado.
+        """
+        self.modo = modo
+        self.db = firebase_db
+        
+        # Verificar el modo solicitado vs. disponibilidad
+        if modo == "firebase" and not FIREBASE_AVAILABLE:
+            print("ADVERTENCIA: Firebase solicitado pero no disponible. Cambiando a modo local.")
+            self.modo = "local"
+        
+        # Inicializar según el modo
+        if self.modo == "firebase" and not self.db and FIREBASE_AVAILABLE:
+            try:
+                self.db = firestore.client()
+            except Exception as e:
+                print(f"Error al conectar con Firestore: {e}")
+                self.modo = "local"
+        
+        # Inicializar almacenamiento local si es necesario
+        if self.modo == "local":
+            self._inicializar_local()
+        
+        # Inicializar analizador de sentimiento
+        self.sentiment_analyzer = sentiment_analyzer
+        if not self.sentiment_analyzer:
+            self._inicializar_sentiment_analyzer()
+            
+        # Inicializar stopwords para validación
+        try:
+            nltk.download('stopwords', quiet=True)
+            self.stopwords_es = set(stopwords.words('spanish'))
+        except:
+            # Fallback básico para stopwords en español
+            self.stopwords_es = {
+                'a', 'al', 'algo', 'algunas', 'algunos', 'ante', 'antes', 'como', 'con', 'contra',
+                'cual', 'cuando', 'de', 'del', 'desde', 'donde', 'durante', 'e', 'el', 'ella',
+                'ellas', 'ellos', 'en', 'entre', 'era', 'erais', 'eran', 'eras', 'eres', 'es',
+                'esa', 'esas', 'ese', 'eso', 'esos', 'esta', 'estaba', 'estabais', 'estaban',
+                'estabas', 'estad', 'estada', 'estadas', 'estado', 'estados', 'estamos', 'estando',
+                'estar', 'estaremos', 'estará', 'estarán', 'estarás', 'estaré', 'estaréis',
+                'estaría', 'estaríais', 'estaríamos', 'estarían', 'estarías', 'estas', 'este',
+                'estemos', 'esto', 'estos', 'estoy', 'estuve', 'estuviera', 'estuvierais',
+                'estuvieran', 'estuvieras', 'estuvieron', 'estuviese', 'estuvieseis', 'estuviesen',
+                'estuvieses', 'estuvimos', 'estuviste', 'estuvisteis', 'estuviéramos',
+                'estuviésemos', 'estuvo', 'está', 'estábamos', 'estáis', 'están', 'estás', 'esté',
+                'estéis', 'estén', 'estés', 'fue', 'fuera', 'fuerais', 'fueran', 'fueras',
+                'fueron', 'fuese', 'fueseis', 'fuesen', 'fueses', 'fui', 'fuimos', 'fuiste',
+                'fuisteis', 'fuéramos', 'fuésemos', 'ha', 'habida', 'habidas', 'habido', 'habidos',
+                'habiendo', 'habremos', 'habrá', 'habrán', 'habrás', 'habré', 'habréis', 'habría',
+                'habríais', 'habríamos', 'habrían', 'habrías', 'habéis', 'había', 'habíais',
+                'habíamos', 'habían', 'habías', 'han', 'has', 'hasta', 'hay', 'haya', 'hayamos',
+                'hayan', 'hayas', 'hayáis', 'he', 'hemos', 'hube', 'hubiera', 'hubierais',
+                'hubieran', 'hubieras', 'hubieron', 'hubiese', 'hubieseis', 'hubiesen',
+                'hubieses', 'hubimos', 'hubiste', 'hubisteis', 'hubiéramos', 'hubiésemos', 'hubo',
+                'la', 'las', 'le', 'les', 'lo', 'los', 'me', 'mi', 'mis', 'mucho', 'muchos', 'muy',
+                'más', 'mí', 'mía', 'mías', 'mío', 'míos', 'nada', 'ni', 'no', 'nos', 'nosotras',
+                'nosotros', 'nuestra', 'nuestras', 'nuestro', 'nuestros', 'o', 'os', 'otra',
+                'otras', 'otro', 'otros', 'para', 'pero', 'poco', 'por', 'porque', 'que', 'quien',
+                'quienes', 'qué', 'se', 'sea', 'seamos', 'sean', 'seas', 'seremos', 'será',
+                'serán', 'serás', 'seré', 'seréis', 'sería', 'seríais', 'seríamos', 'serían',
+                'serías', 'seáis', 'sido', 'siendo', 'sin', 'sobre', 'sois', 'somos', 'son', 'soy',
+                'su', 'sus', 'suya', 'suyas', 'suyo', 'suyos', 'sí', 'también', 'tanto', 'te',
+                'tendremos', 'tendrá', 'tendrán', 'tendrás', 'tendré', 'tendréis', 'tendría',
+                'tendríais', 'tendríamos', 'tendrían', 'tendrías', 'tened', 'tenemos', 'tenga',
+                'tengamos', 'tengan', 'tengas', 'tengo', 'tengáis', 'tenida', 'tenidas', 'tenido',
+                'tenidos', 'teniendo', 'tenéis', 'tenía', 'teníais', 'teníamos', 'tenían', 'tenías',
+                'ti', 'tiene', 'tienen', 'tienes', 'todo', 'todos', 'tu', 'tus', 'tuve', 'tuviera',
+                'tuvierais', 'tuvieran', 'tuvieras', 'tuvieron', 'tuviese', 'tuvieseis',
+                'tuviesen', 'tuvieses', 'tuvimos', 'tuviste', 'tuvisteis', 'tuviéramos',
+                'tuviésemos', 'tuvo', 'tuya', 'tuyas', 'tuyo', 'tuyos', 'tú', 'un', 'una', 'uno',
+                'unos', 'vosotras', 'vosotros', 'vuestra', 'vuestras', 'vuestro', 'vuestros', 'y',
+                'ya', 'yo', 'él', 'éramos'
+            }
+        
+        print(f"Sistema de gestión de reseñas inicializado en modo: {self.modo}")
+    
+    def _inicializar_local(self) -> None:
+        """
+        Inicializa el sistema de almacenamiento local.
+        Crea archivos JSON locales si no existen.
+        """
+        # Directorio para datos locales
+        if not os.path.exists('data'):
+            os.makedirs('data')
+        
+        # Archivo de reseñas
+        if not os.path.exists('data/resenas.json'):
+            with open('data/resenas.json', 'w', encoding='utf-8') as f:
+                json.dump([], f)
+        
+        # Archivo de empresas
+        if not os.path.exists('data/empresas.json'):
+            with open('data/empresas.json', 'w', encoding='utf-8') as f:
+                json.dump([], f)
+                
+        print("✓ Sistema de almacenamiento local de reseñas inicializado")
+    
+    def _inicializar_sentiment_analyzer(self) -> None:
+        """
+        Inicializa el analizador de sentimiento para reseñas.
+        Usa transformer si está disponible o un método simple como fallback.
+        """
+        if TRANSFORMERS_AVAILABLE:
+            try:
+                self.sentiment_analyzer = pipeline(
+                    "sentiment-analysis", 
+                    model="finiteautomata/beto-sentiment-analysis"
+                )
+                print("✓ Analizador de sentimiento inicializado (transformers)")
+                return
+            except Exception as e:
+                print(f"Error al inicializar transformer: {e}")
+        
+        # Método fallback
+        self.sentiment_analyzer = None
+        print("✓ Analizador de sentimiento fallback inicializado")
+    
+    def crear_resena(self, usuario_id: str, empresa_id: str, texto: str, 
+                     rating: float, es_cliente: bool) -> Tuple[bool, str, Optional[Dict]]:
+        """
+        Crea una nueva reseña, la valida y almacena.
+        
+        Args:
+            usuario_id (str): ID del usuario que deja la reseña
+            empresa_id (str): ID de la empresa reseñada
+            texto (str): Texto de la reseña
+            rating (float): Puntuación de 1 a 5
+            es_cliente (bool): Si el usuario indica que fue cliente real
+            
+        Returns:
+            tuple: (éxito, mensaje, datos_resena)
+        """
+        # Validaciones
+        validacion_ok, mensaje = self._validar_resena(usuario_id, empresa_id, texto, rating)
+        if not validacion_ok:
+            return False, mensaje, None
+        
+        # Análisis de sentimiento
+        sentimiento = self._analizar_sentimiento(texto)
+        
+        # Generar ID único
+        resena_id = str(uuid.uuid4())
+        
+        # Crear objeto de reseña
+        resena = {
+            "id": resena_id,
+            "usuario_id": usuario_id,
+            "empresa_id": empresa_id,
+            "texto": texto,
+            "rating": rating,
+            "es_cliente": es_cliente,
+            "fecha": datetime.datetime.now().isoformat(),
+            "sentimiento": sentimiento,
+            "aprobada": True,  # Por defecto aprobada, podría haber moderación
+            "votos_utiles": 0
+        }
+        
+        # Almacenar según modo
+        if self.modo == "firebase":
+            return self._guardar_resena_firebase(resena)
+        else:
+            return self._guardar_resena_local(resena)
+    
+    def _validar_resena(self, usuario_id: str, empresa_id: str, 
+                       texto: str, rating: float) -> Tuple[bool, str]:
+        """
+        Valida una reseña antes de guardarla.
+        
+        Args:
+            usuario_id, empresa_id, texto, rating: Datos a validar
+            
+        Returns:
+            tuple: (es_valida, mensaje)
+        """
+        # Validar longitud del texto
+        if len(texto.split()) < 20:
+            return False, "La reseña debe tener al menos 20 palabras"
+        
+        # Validar rating
+        if not (1 <= rating <= 5):
+            return False, "El rating debe estar entre 1 y 5"
+        
+        # Comprobar si el usuario ya ha comentado recientemente sobre esta empresa
+        ultima_fecha = self._obtener_ultima_resena_usuario(usuario_id, empresa_id)
+        
+        if ultima_fecha:
+            fecha_ultima = datetime.datetime.fromisoformat(ultima_fecha)
+            fecha_actual = datetime.datetime.now()
+            dias_transcurridos = (fecha_actual - fecha_ultima).days
+            
+            if dias_transcurridos < 30:
+                return False, f"Ya has dejado una reseña para esta empresa en los últimos 30 días (hace {dias_transcurridos} días)"
+        
+        # Verificar si es un texto genérico o sospechoso de spam
+        if self._es_texto_generico(texto):
+            return False, "El texto parece genérico. Por favor proporciona una reseña más específica sobre tu experiencia"
+        
+        return True, "Reseña válida"
+    
+    def _obtener_ultima_resena_usuario(self, usuario_id: str, empresa_id: str) -> Optional[str]:
+        """
+        Obtiene la fecha de la última reseña del usuario para una empresa.
+        
+        Args:
+            usuario_id, empresa_id: IDs para la búsqueda
+            
+        Returns:
+            str: Fecha de la última reseña o None si no existe
+        """
+        if self.modo == "firebase":
+            try:
+                # Consultar Firestore
+                query = self.db.collection('resenas') \
+                          .where('usuario_id', '==', usuario_id) \
+                          .where('empresa_id', '==', empresa_id) \
+                          .order_by('fecha', direction=firestore.Query.DESCENDING) \
+                          .limit(1)
+                
+                resultados = list(query.stream())
+                
+                if resultados:
+                    return resultados[0].to_dict().get('fecha')
+                
+                return None
+                
+            except Exception as e:
+                print(f"Error al buscar reseña anterior: {e}")
+                return None
+        else:
+            try:
+                # Buscar en almacenamiento local
+                with open('data/resenas.json', 'r', encoding='utf-8') as f:
+                    resenas = json.load(f)
+                
+                # Filtrar por usuario y empresa, ordenar por fecha
+                resenas_usuario = [r for r in resenas 
+                                  if r['usuario_id'] == usuario_id and r['empresa_id'] == empresa_id]
+                
+                if resenas_usuario:
+                    # Ordenar por fecha (más reciente primero)
+                    resenas_usuario.sort(key=lambda x: x['fecha'], reverse=True)
+                    return resenas_usuario[0]['fecha']
+                
+                return None
+                
+            except Exception as e:
+                print(f"Error al buscar reseña anterior: {e}")
+                return None
+    
+    def _es_texto_generico(self, texto: str) -> bool:
+        """
+        Verifica si un texto parece genérico o poco informativo.
+        
+        Args:
+            texto (str): Texto a analizar
+            
+        Returns:
+            bool: True si el texto parece genérico
+        """
+        # Limpiar texto
+        texto = texto.lower()
+        texto = ''.join([c for c in texto if c not in string.punctuation])
+        palabras = texto.split()
+        
+        # Eliminar stopwords
+        palabras_significativas = [w for w in palabras if w not in self.stopwords_es]
+        
+        # Verificar cantidad de palabras significativas
+        if len(palabras_significativas) < 8:
+            return True
+        
+        # Patrones que indican texto genérico
+        patrones_genericos = [
+            r"(bueno|malo|regular|excelente|pésimo)\s*(servicio|atención|empresa)",
+            r"(recomiendo|no recomiendo)",
+            r"(buena|mala)\s*experiencia",
+            r"(volveré|no volveré)"
+        ]
+        
+        # Contar coincidencias con patrones genéricos
+        coincidencias = sum(1 for patron in patrones_genericos if re.search(patron, texto))
+        
+        # Si hay muchas coincidencias con patrones genéricos y pocas palabras únicas
+        palabras_unicas = len(set(palabras_significativas))
+        porcentaje_unicas = palabras_unicas / len(palabras_significativas) if palabras_significativas else 0
+        
+        return (coincidencias >= 2 and porcentaje_unicas < 0.7) or porcentaje_unicas < 0.5
+    
+    def _analizar_sentimiento(self, texto: str) -> Dict:
+        """
+        Analiza el sentimiento del texto de una reseña.
+        
+        Args:
+            texto (str): Texto a analizar
+            
+        Returns:
+            dict: Resultado del análisis con sentimiento y puntaje
+        """
+        if self.sentiment_analyzer:
+            try:
+                # Usar transformer si está disponible
+                result = self.sentiment_analyzer(texto)
+                label = result[0]["label"]
+                score = result[0]["score"]
+                
+                if label == "POS":
+                    return {"tipo": "positivo", "valor": score}
+                elif label == "NEG":
+                    return {"tipo": "negativo", "valor": score}
+                else:
+                    return {"tipo": "neutro", "valor": 0.5}
+            except Exception as e:
+                print(f"Error en análisis de sentimiento: {e}")
+        
+        # Método fallback: análisis simple basado en palabras clave
+        palabras_positivas = [
+            "excelente", "bueno", "genial", "recomendable", "satisfecho", "feliz", 
+            "encantado", "perfecto", "increíble", "maravilloso", "profesional", 
+            "calidad", "mejor", "positivo", "eficiente", "rápido", "solución", 
+            "amable", "atento", "fantástico", "impresionante"
+        ]
+        
+        palabras_negativas = [
+            "malo", "pésimo", "terrible", "horrible", "decepcionante", "problema",
+            "queja", "reclamo", "defectuoso", "lento", "costoso", "caro", "fraude",
+            "estafa", "incumplimiento", "demanda", "multa", "falla", "error", 
+            "desagradable", "peligroso", "inútil", "ineficiente", "molesto"
+        ]
+        
+        texto_lower = texto.lower()
+        
+        # Contar palabras positivas y negativas
+        count_pos = sum(1 for palabra in palabras_positivas if palabra in texto_lower)
+        count_neg = sum(1 for palabra in palabras_negativas if palabra in texto_lower)
+        
+        # Calcular sentimiento
+        if count_pos > count_neg:
+            valor = min(0.9, 0.5 + (count_pos - count_neg) * 0.1)
+            return {"tipo": "positivo", "valor": valor}
+        elif count_neg > count_pos:
+            valor = min(0.9, 0.5 + (count_neg - count_pos) * 0.1)
+            return {"tipo": "negativo", "valor": valor}
+        else:
+            # Analizar en base al rating implícito en el texto
+            patron_rating = r'([1-5])\s*(?:estrellas?|puntos?)'
+            match = re.search(patron_rating, texto_lower)
+            
+            if match:
+                rating = int(match.group(1))
+                if rating >= 4:
+                    return {"tipo": "positivo", "valor": 0.7}
+                elif rating <= 2:
+                    return {"tipo": "negativo", "valor": 0.7}
+            
+            return {"tipo": "neutro", "valor": 0.5}
+    
+    def _guardar_resena_firebase(self, resena: Dict) -> Tuple[bool, str, Dict]:
+        """
+        Guarda una reseña en Firestore.
+        
+        Args:
+            resena (dict): Datos de la reseña a guardar
+            
+        Returns:
+            tuple: (éxito, mensaje, datos_resena)
+        """
+        try:
+            # Guardar en colección de reseñas
+            self.db.collection('resenas').document(resena['id']).set(resena)
+            
+            # Actualizar datos de la empresa
+            self._actualizar_datos_empresa_firebase(resena)
+            
+            # Actualizar datos del usuario (historial de comentarios)
+            comentario_usuario = {
+                "empresa_id": resena['empresa_id'],
+                "resena_id": resena['id'],
+                "fecha": resena['fecha'],
+                "rating": resena['rating'],
+                "texto": resena['texto'][:100] + "..." if len(resena['texto']) > 100 else resena['texto']
+            }
+            
+            usuario_ref = self.db.collection('usuarios').document(resena['usuario_id'])
+            usuario_doc = usuario_ref.get()
+            
+            if usuario_doc.exists:
+                usuario_data = usuario_doc.to_dict()
+                comentarios = usuario_data.get('comentarios', [])
+                comentarios.append(comentario_usuario)
+                
+                # Actualizar puntos del usuario
+                puntos = usuario_data.get('puntos', 0) + 5
+                
+                usuario_ref.update({
+                    'comentarios': comentarios,
+                    'puntos': puntos
+                })
+            
+            return True, "Reseña guardada con éxito", resena
+            
+        except Exception as e:
+            return False, f"Error al guardar reseña: {str(e)}", None
+    
+    def _actualizar_datos_empresa_firebase(self, resena: Dict) -> None:
+        """
+        Actualiza los datos de reputación de una empresa en Firestore después de una nueva reseña.
+        
+        Args:
+            resena (dict): Datos de la nueva reseña
+        """
+        try:
+            # Referencia a la empresa
+            empresa_ref = self.db.collection('empresas').document(resena['empresa_id'])
+            empresa_doc = empresa_ref.get()
+            
+            if not empresa_doc.exists:
+                print(f"Empresa {resena['empresa_id']} no encontrada en la base de datos")
+                return
+            
+            empresa_data = empresa_doc.to_dict()
+            
+            # Actualizar rating promedio
+            num_resenas = empresa_data.get('num_resenas_colaborativas', 0) + 1
+            rating_actual = empresa_data.get('rating_colaborativo', 0)
+            
+            nuevo_rating = ((rating_actual * (num_resenas - 1)) + resena['rating']) / num_resenas
+            
+            # Actualizar contadores de sentimiento
+            sentimiento = resena['sentimiento']['tipo']
+            sentimiento_contadores = empresa_data.get('sentimiento_colaborativo', {
+                'positivo': 0,
+                'neutro': 0,
+                'negativo': 0
+            })
+            
+            sentimiento_contadores[sentimiento] = sentimiento_contadores.get(sentimiento, 0) + 1
+            
+            # Actualizar empresa
+            actualizacion = {
+                'num_resenas_colaborativas': num_resenas,
+                'rating_colaborativo': nuevo_rating,
+                'sentimiento_colaborativo': sentimiento_contadores,
+                'ultima_actualizacion': datetime.datetime.now()
+            }
+            
+            # Si es la primera reseña, inicializar listas
+            if num_resenas == 1:
+                actualizacion['resenas_recientes'] = [resena['id']]
+            else:
+                # Añadir a lista de reseñas recientes (máximo 10)
+                resenas_recientes = empresa_data.get('resenas_recientes', [])
+                resenas_recientes.append(resena['id'])
+                if len(resenas_recientes) > 10:
+                    resenas_recientes = resenas_recientes[-10:]
+                actualizacion['resenas_recientes'] = resenas_recientes
+            
+            # Aplicar actualización
+            empresa_ref.update(actualizacion)
+            
+        except Exception as e:
+            print(f"Error al actualizar datos de empresa: {e}")
+    
+    def _guardar_resena_local(self, resena: Dict) -> Tuple[bool, str, Dict]:
+        """
+        Guarda una reseña en el almacenamiento local.
+        
+        Args:
+            resena (dict): Datos de la reseña a guardar
+            
+        Returns:
+            tuple: (éxito, mensaje, datos_resena)
+        """
+        try:
+            # Cargar reseñas existentes
+            with open('data/resenas.json', 'r', encoding='utf-8') as f:
+                resenas = json.load(f)
+            
+            # Añadir nueva reseña
+            resenas.append(resena)
+            
+            # Guardar reseñas actualizadas
+            with open('data/resenas.json', 'w', encoding='utf-8') as f:
+                json.dump(resenas, f, indent=4)
+            
+            # Actualizar datos de la empresa
+            self._actualizar_datos_empresa_local(resena)
+            
+            # Actualizar historial del usuario
+            self._actualizar_historial_usuario_local(resena)
+            
+            return True, "Reseña guardada con éxito", resena
+            
+        except Exception as e:
+            return False, f"Error al guardar reseña: {str(e)}", None
+    
+    def _actualizar_datos_empresa_local(self, resena: Dict) -> None:
+        """
+        Actualiza los datos de reputación de una empresa en el almacenamiento local.
+        
+        Args:
+            resena (dict): Datos de la nueva reseña
+        """
+        try:
+            # Cargar empresas
+            with open('data/empresas.json', 'r', encoding='utf-8') as f:
+                empresas = json.load(f)
+            
+            # Buscar la empresa
+            empresa_encontrada = False
+            for i, empresa in enumerate(empresas):
+                if empresa['id'] == resena['empresa_id']:
+                    # Actualizar rating promedio
+                    num_resenas = empresa.get('num_resenas_colaborativas', 0) + 1
+                    rating_actual = empresa.get('rating_colaborativo', 0)
+                    
+                    nuevo_rating = ((rating_actual * (num_resenas - 1)) + resena['rating']) / num_resenas
+                    
+                    # Actualizar contadores de sentimiento
+                    sentimiento = resena['sentimiento']['tipo']
+                    sentimiento_contadores = empresa.get('sentimiento_colaborativo', {
+                        'positivo': 0,
+                        'neutro': 0,
+                        'negativo': 0
+                    })
+                    
+                    sentimiento_contadores[sentimiento] = sentimiento_contadores.get(sentimiento, 0) + 1
+                    
+                    # Actualizar empresa
+                    empresas[i]['num_resenas_colaborativas'] = num_resenas
+                    empresas[i]['rating_colaborativo'] = nuevo_rating
+                    empresas[i]['sentimiento_colaborativo'] = sentimiento_contadores
+                    empresas[i]['ultima_actualizacion'] = datetime.datetime.now().isoformat()
+                    
+                    # Manejar lista de reseñas recientes
+                    if 'resenas_recientes' not in empresas[i]:
+                        empresas[i]['resenas_recientes'] = []
+                    
+                    empresas[i]['resenas_recientes'].append(resena['id'])
+                    if len(empresas[i]['resenas_recientes']) > 10:
+                        empresas[i]['resenas_recientes'] = empresas[i]['resenas_recientes'][-10:]
+                    
+                    empresa_encontrada = True
+                    break
+            
+            # Si no se encontró la empresa, podría ser un error
+            if not empresa_encontrada:
+                print(f"Empresa {resena['empresa_id']} no encontrada en la base de datos")
+            
+            # Guardar empresas actualizadas
+            with open('data/empresas.json', 'w', encoding='utf-8') as f:
+                json.dump(empresas, f, indent=4)
+                
+        except Exception as e:
+            print(f"Error al actualizar datos de empresa: {e}")
+    
+    def _actualizar_historial_usuario_local(self, resena: Dict) -> None:
+        """
+        Actualiza el historial de comentarios de un usuario en el almacenamiento local.
+        
+        Args:
+            resena (dict): Datos de la reseña para agregar al historial
+        """
+        try:
+            # Cargar usuarios
+            with open('data/usuarios.json', 'r', encoding='utf-8') as f:
+                usuarios = json.load(f)
+            
+            # Crear resumen de comentario para el historial
+            comentario_usuario = {
+                "empresa_id": resena['empresa_id'],
+                "resena_id": resena['id'],
+                "fecha": resena['fecha'],
+                "rating": resena['rating'],
+                "texto": resena['texto'][:100] + "..." if len(resena['texto']) > 100 else resena['texto']
+            }
+            
+            # Buscar y actualizar usuario
+            usuario_encontrado = False
+            for i, usuario in enumerate(usuarios):
+                if usuario['uid'] == resena['usuario_id']:
+                    # Añadir comentario al historial
+                    if 'comentarios' not in usuarios[i]:
+                        usuarios[i]['comentarios'] = []
+                    
+                    usuarios[i]['comentarios'].append(comentario_usuario)
+                    
+                    # Actualizar puntos
+                    if 'puntos' not in usuarios[i]:
+                        usuarios[i]['puntos'] = 0
+                    
+                    usuarios[i]['puntos'] += 5
+                    
+                    # Actualizar nivel si corresponde
+                    puntos_totales = usuarios[i]['puntos']
+                    if puntos_totales >= 1000 and usuarios[i].get('nivel', 1) < 4:
+                        usuarios[i]['nivel'] = 4
+                    elif puntos_totales >= 300 and usuarios[i].get('nivel', 1) < 3:
+                        usuarios[i]['nivel'] = 3
+                    elif puntos_totales >= 100 and usuarios[i].get('nivel', 1) < 2:
+                        usuarios[i]['nivel'] = 2
+                    
+                    usuario_encontrado = True
+                    break
+            
+            if not usuario_encontrado:
+                print(f"Usuario {resena['usuario_id']} no encontrado en la base de datos")
+            
+            # Guardar usuarios actualizados
+            with open('data/usuarios.json', 'w', encoding='utf-8') as f:
+                json.dump(usuarios, f, indent=4)
+                
+        except Exception as e:
+            print(f"Error al actualizar historial de usuario: {e}")
+    
+    def obtener_resenas_empresa(self, empresa_id: str, limite: int = 10, 
+                             solo_aprobadas: bool = True) -> List[Dict]:
+        """
+        Obtiene las reseñas de una empresa específica.
+        
+        Args:
+            empresa_id (str): ID de la empresa
+            limite (int): Número máximo de reseñas a obtener
+            solo_aprobadas (bool): Si solo se deben incluir reseñas aprobadas
+            
+        Returns:
+            list: Lista de reseñas
+        """
+        if self.modo == "firebase":
+            try:
+                # Consultar Firestore
+                query = self.db.collection('resenas').where('empresa_id', '==', empresa_id)
+                
+                if solo_aprobadas:
+                    query = query.where('aprobada', '==', True)
+                
+                query = query.order_by('fecha', direction=firestore.Query.DESCENDING).limit(limite)
+                
+                resenas = []
+                for doc in query.stream():
+                    resenas.append(doc.to_dict())
+                
+                return resenas
+                
+            except Exception as e:
+                print(f"Error al obtener reseñas: {e}")
+                return []
+        else:
+            try:
+                # Cargar reseñas
+                with open('data/resenas.json', 'r', encoding='utf-8') as f:
+                    todas_resenas = json.load(f)
+                
+                # Filtrar por empresa y estado de aprobación
+                resenas_empresa = [r for r in todas_resenas if r['empresa_id'] == empresa_id]
+                
+                if solo_aprobadas:
+                    resenas_empresa = [r for r in resenas_empresa if r.get('aprobada', True)]
+                
+                # Ordenar por fecha (más recientes primero)
+                resenas_empresa.sort(key=lambda x: x['fecha'], reverse=True)
+                
+                # Limitar cantidad
+                return resenas_empresa[:limite]
+                
+            except Exception as e:
+                print(f"Error al obtener reseñas: {e}")
+                return []
+    
+    def obtener_resenas_usuario(self, usuario_id: str, limite: int = 10) -> List[Dict]:
+        """
+        Obtiene las reseñas realizadas por un usuario específico.
+        
+        Args:
+            usuario_id (str): ID del usuario
+            limite (int): Número máximo de reseñas a obtener
+            
+        Returns:
+            list: Lista de reseñas
+        """
+        if self.modo == "firebase":
+            try:
+                # Consultar Firestore
+                query = self.db.collection('resenas') \
+                          .where('usuario_id', '==', usuario_id) \
+                          .order_by('fecha', direction=firestore.Query.DESCENDING) \
+                          .limit(limite)
+                
+                resenas = []
+                for doc in query.stream():
+                    resenas.append(doc.to_dict())
+                
+                return resenas
+                
+            except Exception as e:
+                print(f"Error al obtener reseñas del usuario: {e}")
+                return []
+        else:
+            try:
+                # Cargar reseñas
+                with open('data/resenas.json', 'r', encoding='utf-8') as f:
+                    todas_resenas = json.load(f)
+                
+                # Filtrar por usuario
+                resenas_usuario = [r for r in todas_resenas if r['usuario_id'] == usuario_id]
+                
+                # Ordenar por fecha (más recientes primero)
+                resenas_usuario.sort(key=lambda x: x['fecha'], reverse=True)
+                
+                # Limitar cantidad
+                return resenas_usuario[:limite]
+                
+            except Exception as e:
+                print(f"Error al obtener reseñas del usuario: {e}")
+                return []
+    
+    def votar_resena_util(self, resena_id: str, usuario_id: str) -> Tuple[bool, str]:
+        """
+        Registra un voto de utilidad para una reseña.
+        
+        Args:
+            resena_id (str): ID de la reseña
+            usuario_id (str): ID del usuario que vota
+            
+        Returns:
+            tuple: (éxito, mensaje)
+        """
+        if self.modo == "firebase":
+            try:
+                # Verificar si el usuario ya votó esta reseña
+                voto_ref = self.db.collection('votos_resenas').where(
+                    'resena_id', '==', resena_id).where(
+                    'usuario_id', '==', usuario_id).limit(1)
+                
+                votos = list(voto_ref.stream())
+                if votos:
+                    return False, "Ya has votado esta reseña anteriormente"
+                
+                # Registrar voto
+                voto_id = str(uuid.uuid4())
+                voto = {
+                    'id': voto_id,
+                    'resena_id': resena_id,
+                    'usuario_id': usuario_id,
+                    'fecha': datetime.datetime.now().isoformat()
+                }
+                
+                self.db.collection('votos_resenas').document(voto_id).set(voto)
+                
+                # Actualizar contador en la reseña
+                resena_ref = self.db.collection('resenas').document(resena_id)
+                resena_doc = resena_ref.get()
+                
+                if not resena_doc.exists:
+                    return False, "Reseña no encontrada"
+                
+                resena_data = resena_doc.to_dict()
+                votos_actuales = resena_data.get('votos_utiles', 0)
+                
+                resena_ref.update({
+                    'votos_utiles': votos_actuales + 1
+                })
+                
+                return True, "Voto registrado con éxito"
+                
+            except Exception as e:
+                return False, f"Error al registrar voto: {str(e)}"
+        else:
+            try:
+                # Cargar votos si existe el archivo
+                votos_path = 'data/votos_resenas.json'
+                if os.path.exists(votos_path):
+                    with open(votos_path, 'r', encoding='utf-8') as f:
+                        votos = json.load(f)
+                else:
+                    votos = []
+                
+                # Verificar si el usuario ya votó
+                if any(v['resena_id'] == resena_id and v['usuario_id'] == usuario_id for v in votos):
+                    return False, "Ya has votado esta reseña anteriormente"
+                
+                # Registrar voto
+                voto_id = str(uuid.uuid4())
+                voto = {
+                    'id': voto_id,
+                    'resena_id': resena_id,
+                    'usuario_id': usuario_id,
+                    'fecha': datetime.datetime.now().isoformat()
+                }
+                
+                votos.append(voto)
+                
+                # Guardar votos
+                with open(votos_path, 'w', encoding='utf-8') as f:
+                    json.dump(votos, f, indent=4)
+                
+                # Actualizar reseña
+                with open('data/resenas.json', 'r', encoding='utf-8') as f:
+                    resenas = json.load(f)
+                
+                resena_encontrada = False
+                for i, resena in enumerate(resenas):
+                    if resena['id'] == resena_id:
+                        votos_actuales = resena.get('votos_utiles', 0)
+                        resenas[i]['votos_utiles'] = votos_actuales + 1
+                        resena_encontrada = True
+                        break
+                
+                if not resena_encontrada:
+                    return False, "Reseña no encontrada"
+                
+                # Guardar reseñas actualizadas
+                with open('data/resenas.json', 'w', encoding='utf-8') as f:
+                    json.dump(resenas, f, indent=4)
+                
+                return True, "Voto registrado con éxito"
+                
+            except Exception as e:
+                return False, f"Error al registrar voto: {str(e)}"
+    
+    def reportar_resena(self, resena_id: str, usuario_id: str, motivo: str) -> Tuple[bool, str]:
+        """
+        Reporta una reseña por contenido inapropiado u otros motivos.
+        
+        Args:
+            resena_id (str): ID de la reseña
+            usuario_id (str): ID del usuario que reporta
+            motivo (str): Motivo del reporte
+            
+        Returns:
+            tuple: (éxito, mensaje)
+        """
+        if not motivo or len(motivo) < 10:
+            return False, "Debe proporcionar un motivo de al menos 10 caracteres"
+        
+        reporte = {
+            'id': str(uuid.uuid4()),
+            'resena_id': resena_id,
+            'usuario_id': usuario_id,
+            'motivo': motivo,
+            'fecha': datetime.datetime.now().isoformat(),
+            'estado': 'pendiente'
+        }
+        
+        if self.modo == "firebase":
+            try:
+                # Verificar si el usuario ya reportó esta reseña
+                reporte_ref = self.db.collection('reportes_resenas').where(
+                    'resena_id', '==', resena_id).where(
+                    'usuario_id', '==', usuario_id).limit(1)
+                
+                reportes = list(reporte_ref.stream())
+                if reportes:
+                    return False, "Ya has reportado esta reseña anteriormente"
+                
+                # Guardar reporte
+                self.db.collection('reportes_resenas').document(reporte['id']).set(reporte)
+                
+                return True, "Reporte registrado con éxito"
+                
+            except Exception as e:
+                return False, f"Error al registrar reporte: {str(e)}"
+        else:
+            try:
+                # Cargar reportes si existe el archivo
+                reportes_path = 'data/reportes_resenas.json'
+                if os.path.exists(reportes_path):
+                    with open(reportes_path, 'r', encoding='utf-8') as f:
+                        reportes = json.load(f)
+                else:
+                    reportes = []
+                
+                # Verificar si el usuario ya reportó
+                if any(r['resena_id'] == resena_id and r['usuario_id'] == usuario_id for r in reportes):
+                    return False, "Ya has reportado esta reseña anteriormente"
+                
+                # Guardar reporte
+                reportes.append(reporte)
+                
+                with open(reportes_path, 'w', encoding='utf-8') as f:
+                    json.dump(reportes, f, indent=4)
+                
+                return True, "Reporte registrado con éxito"
+                
+            except Exception as e:
+                return False, f"Error al registrar reporte: {str(e)}"
+    
+    def buscar_empresa_por_nombre(self, nombre: str, limite: int = 10) -> List[Dict]:
+        """
+        Busca empresas por nombre o coincidencia parcial.
+        
+        Args:
+            nombre (str): Nombre o parte del nombre a buscar
+            limite (int): Número máximo de resultados
+            
+        Returns:
+            list: Lista de empresas coincidentes
+        """
+        nombre = nombre.lower()
+        
+        if self.modo == "firebase":
+            try:
+                # Firestore no soporta búsquedas parciales nativas
+                # Esta es una implementación simple que obtiene todas las empresas
+                # y filtra en memoria (no recomendado para grandes volúmenes de datos)
+                empresas = []
+                query = self.db.collection('empresas').limit(100)  # Limitar la cantidad inicial
+                
+                for doc in query.stream():
+                    empresa = doc.to_dict()
+                    if nombre in empresa.get('nombre', '').lower():
+                        empresas.append(empresa)
+                        if len(empresas) >= limite:
+                            break
+                
+                return empresas
+                
+            except Exception as e:
+                print(f"Error al buscar empresas: {e}")
+                return []
+        else:
+            try:
+                # Cargar empresas
+                with open('data/empresas.json', 'r', encoding='utf-8') as f:
+                    todas_empresas = json.load(f)
+                
+                # Filtrar por nombre (coincidencia parcial)
+                empresas_coincidentes = [
+                    e for e in todas_empresas 
+                    if nombre in e.get('nombre', '').lower()
+                ]
+                
+                # Limitar resultados
+                return empresas_coincidentes[:limite]
+                
+            except Exception as e:
+                print(f"Error al buscar empresas: {e}")
+                return []
+    
+    def buscar_empresa_por_rubro(self, rubro: str, limite: int = 10) -> List[Dict]:
+        """
+        Busca empresas por rubro o categoría.
+        
+        Args:
+            rubro (str): Rubro o categoría a buscar
+            limite (int): Número máximo de resultados
+            
+        Returns:
+            list: Lista de empresas del rubro especificado
+        """
+        rubro = rubro.lower()
+        
+        if self.modo == "firebase":
+            try:
+                query = self.db.collection('empresas').where('rubro', '==', rubro).limit(limite)
+                
+                empresas = []
+                for doc in query.stream():
+                    empresas.append(doc.to_dict())
+                
+                return empresas
+                
+            except Exception as e:
+                print(f"Error al buscar empresas por rubro: {e}")
+                return []
+        else:
+            try:
+                # Cargar empresas
+                with open('data/empresas.json', 'r', encoding='utf-8') as f:
+                    todas_empresas = json.load(f)
+                
+                # Filtrar por rubro (coincidencia exacta o parcial)
+                empresas_rubro = [
+                    e for e in todas_empresas 
+                    if 'rubro' in e and (
+                        e['rubro'].lower() == rubro or 
+                        rubro in e['rubro'].lower()
+                    )
+                ]
+                
+                # Limitar resultados
+                return empresas_rubro[:limite]
+                
+            except Exception as e:
+                print(f"Error al buscar empresas por rubro: {e}")
+                return []
+    
+    def obtener_ranking_empresas(self, rubro: Optional[str] = None, 
+                               limite: int = 10) -> List[Dict]:
+        """
+        Obtiene un ranking de empresas ordenado por reputación.
+        
+        Args:
+            rubro (str, opcional): Filtrar por rubro específico
+            limite (int): Número máximo de resultados
+            
+        Returns:
+            list: Lista de empresas ordenadas por índice de reputación
+        """
+        if self.modo == "firebase":
+            try:
+                if rubro:
+                    # Filtrar por rubro
+                    query = self.db.collection('empresas').where('rubro', '==', rubro)
+                else:
+                    # Todas las empresas
+                    query = self.db.collection('empresas')
+                
+                empresas = []
+                for doc in query.stream():
+                    empresas.append(doc.to_dict())
+                
+                # Ordenar por índice de reputación (descendente)
+                empresas.sort(key=lambda x: x.get('indice_reputacion', 0), reverse=True)
+                
+                # Limitar resultados
+                return empresas[:limite]
+                
+            except Exception as e:
+                print(f"Error al obtener ranking: {e}")
+                return []
+        else:
+            try:
+                # Cargar empresas
+                with open('data/empresas.json', 'r', encoding='utf-8') as f:
+                    empresas = json.load(f)
+                
+                # Filtrar por rubro si es necesario
+                if rubro:
+                    rubro = rubro.lower()
+                    empresas = [
+                        e for e in empresas 
+                        if 'rubro' in e and (
+                            e['rubro'].lower() == rubro or 
+                            rubro in e['rubro'].lower()
+                        )
+                    ]
+                
+                # Ordenar por índice de reputación (descendente)
+                empresas.sort(key=lambda x: x.get('indice_reputacion', 0), reverse=True)
+                
+                # Limitar resultados
+                return empresas[:limite]
+                
+            except Exception as e:
+                print(f"Error al obtener ranking: {e}")
+                return []
+    
+    def obtener_empresa(self, empresa_id: str) -> Optional[Dict]:
+        """
+        Obtiene los datos completos de una empresa.
+        
+        Args:
+            empresa_id (str): ID de la empresa
+            
+        Returns:
+            dict: Datos de la empresa o None si no se encuentra
+        """
+        if self.modo == "firebase":
+            try:
+                doc = self.db.collection('empresas').document(empresa_id).get()
+                
+                if not doc.exists:
+                    return None
+                
+                return doc.to_dict()
+                
+            except Exception as e:
+                print(f"Error al obtener empresa: {e}")
+                return None
+        else:
+            try:
+                # Cargar empresas
+                with open('data/empresas.json', 'r', encoding='utf-8') as f:
+                    empresas = json.load(f)
+                
+                # Buscar por ID
+                for empresa in empresas:
+                    if empresa['id'] == empresa_id:
+                        return empresa
+                
+                return None
+                
+            except Exception as e:
+                print(f"Error al obtener empresa: {e}")
+                return None
+    
+    def agregar_empresa(self, nombre: str, rubro: str, region: Optional[str] = None,
+                      descripcion: Optional[str] = None) -> Tuple[bool, str, Optional[Dict]]:
+        """
+        Agrega una nueva empresa a la base de datos.
+        
+        Args:
+            nombre (str): Nombre de la empresa
+            rubro (str): Rubro o categoría
+            region (str, opcional): Región o ciudad
+            descripcion (str, opcional): Descripción de la empresa
+            
+        Returns:
+            tuple: (éxito, mensaje, datos_empresa)
+        """
+        # Validar datos básicos
+        if not nombre or len(nombre) < 3:
+            return False, "El nombre de la empresa debe tener al menos 3 caracteres", None
+        
+        if not rubro:
+            return False, "Debe especificar un rubro para la empresa", None
+        
+        # Generar ID único
+        empresa_id = str(uuid.uuid4())
+        
+        # Crear objeto empresa
+        empresa = {
+            "id": empresa_id,
+            "nombre": nombre,
+            "rubro": rubro,
+            "region": region,
+            "descripcion": descripcion,
+            "fecha_registro": datetime.datetime.now().isoformat(),
+            "indice_reputacion": 50,  # Valor inicial neutral
+            "rating_colaborativo": 0,
+            "num_resenas_colaborativas": 0,
+            "sentimiento_colaborativo": {
+                "positivo": 0,
+                "neutro": 0,
+                "negativo": 0
+            },
+            "resenas_recientes": []
+        }
+        
+        if self.modo == "firebase":
+            try:
+                # Guardar en Firestore
+                self.db.collection('empresas').document(empresa_id).set(empresa)
+                return True, "Empresa agregada con éxito", empresa
+                
+            except Exception as e:
+                return False, f"Error al agregar empresa: {str(e)}", None
+        else:
+            try:
+                # Cargar empresas existentes
+                with open('data/empresas.json', 'r', encoding='utf-8') as f:
+                    empresas = json.load(f)
+                
+                # Verificar si ya existe una empresa con el mismo nombre
+                if any(e['nombre'].lower() == nombre.lower() for e in empresas):
+                    return False, "Ya existe una empresa con ese nombre", None
+                
+                # Añadir nueva empresa
+                empresas.append(empresa)
+                
+                # Guardar empresas actualizadas
+                with open('data/empresas.json', 'w', encoding='utf-8') as f:
+                    json.dump(empresas, f, indent=4)
+                
+                return True, "Empresa agregada con éxito", empresa
+                
+            except Exception as e:
+                return False, f"Error al agregar empresa: {str(e)}", None
+    
+    def exportar_datos(self, formato: str = 'json') -> Tuple[bool, str, Optional[str]]:
+        """
+        Exporta todos los datos de reseñas y empresas.
+        
+        Args:
+            formato (str): Formato de exportación ('json' o 'csv')
+            
+        Returns:
+            tuple: (éxito, mensaje, contenido_o_ruta)
+        """
+        if formato not in ['json', 'csv']:
+            return False, "Formato no soportado. Use 'json' o 'csv'", None
+        
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        if self.modo == "firebase":
+            try:
+                # Obtener datos de Firestore
+                empresas = []
+                for doc in self.db.collection('empresas').stream():
+                    empresas.append(doc.to_dict())
+                
+                resenas = []
+                for doc in self.db.collection('resenas').stream():
+                    resenas.append(doc.to_dict())
+                
+                # Crear directorio de exportación si no existe
+                if not os.path.exists('exports'):
+                    os.makedirs('exports')
+                
+                if formato == 'json':
+                    # Exportar como JSON
+                    datos_exportacion = {
+                        "timestamp": timestamp,
+                        "empresas": empresas,
+                        "resenas": resenas
+                    }
+                    
+                    ruta_archivo = f"exports/export_{timestamp}.json"
+                    with open(ruta_archivo, 'w', encoding='utf-8') as f:
+                        json.dump(datos_exportacion, f, ensure_ascii=False, indent=4)
+                    
+                    return True, "Datos exportados con éxito", ruta_archivo
+                
+                else:  # CSV
+                    import csv
+                    
+                    # Exportar empresas
+                    ruta_empresas = f"exports/empresas_{timestamp}.csv"
+                    with open(ruta_empresas, 'w', encoding='utf-8', newline='') as f:
+                        if empresas:
+                            # Obtener campos (aplanando estructura)
+                            campos = list(empresas[0].keys())
+                            
+                            # Eliminar campos anidados complejos
+                            if 'sentimiento_colaborativo' in campos:
+                                campos.remove('sentimiento_colaborativo')
+                            if 'resenas_recientes' in campos:
+                                campos.remove('resenas_recientes')
+                            
+                            writer = csv.DictWriter(f, fieldnames=campos)
+                            writer.writeheader()
+                            
+                            for empresa in empresas:
+                                # Crear una versión plana del diccionario
+                                empresa_plana = {k: v for k, v in empresa.items() if k in campos}
+                                writer.writerow(empresa_plana)
+                    
+                    # Exportar reseñas
+                    ruta_resenas = f"exports/resenas_{timestamp}.csv"
+                    with open(ruta_resenas, 'w', encoding='utf-8', newline='') as f:
+                        if resenas:
+                            # Obtener campos (aplanando estructura)
+                            campos = list(resenas[0].keys())
+                            
+                            # Eliminar campos anidados complejos
+                            if 'sentimiento' in campos:
+                                campos.remove('sentimiento')
+                            
+                            # Añadir campos planos para sentimiento
+                            campos.extend(['sentimiento_tipo', 'sentimiento_valor'])
+                            
+                            writer = csv.DictWriter(f, fieldnames=campos)
+                            writer.writeheader()
+                            
+                            for resena in resenas:
+                                # Crear una versión plana del diccionario
+                                resena_plana = {k: v for k, v in resena.items() if k in campos}
+                                
+                                # Añadir campos de sentimiento aplanados
+                                if 'sentimiento' in resena and isinstance(resena['sentimiento'], dict):
+                                    resena_plana['sentimiento_tipo'] = resena['sentimiento'].get('tipo', '')
+                                    resena_plana['sentimiento_valor'] = resena['sentimiento'].get('valor', '')
+                                
+                                writer.writerow(resena_plana)
+                    
+                    return True, "Datos exportados con éxito", f"Empresas: {ruta_empresas}, Reseñas: {ruta_resenas}"
+                
+            except Exception as e:
+                return False, f"Error al exportar datos: {str(e)}", None
+        else:
+            try:
+                # Obtener datos locales
+                with open('data/empresas.json', 'r', encoding='utf-8') as f:
+                    empresas = json.load(f)
+                
+                with open('data/resenas.json', 'r', encoding='utf-8') as f:
+                    resenas = json.load(f)
+                
+                # Crear directorio de exportación si no existe
+                if not os.path.exists('exports'):
+                    os.makedirs('exports')
+                
+                if formato == 'json':
+                    # Exportar como JSON
+                    datos_exportacion = {
+                        "timestamp": timestamp,
+                        "empresas": empresas,
+                        "resenas": resenas
+                    }
+                    
+                    ruta_archivo = f"exports/export_{timestamp}.json"
+                    with open(ruta_archivo, 'w', encoding='utf-8') as f:
+                        json.dump(datos_exportacion, f, ensure_ascii=False, indent=4)
+                    
+                    return True, "Datos exportados con éxito", ruta_archivo
+                
+                else:  # CSV
+                    import csv
+                    
+                    # Exportar empresas
+                    ruta_empresas = f"exports/empresas_{timestamp}.csv"
+                    with open(ruta_empresas, 'w', encoding='utf-8', newline='') as f:
+                        if empresas:
+                            # Obtener campos (aplanando estructura)
+                            campos = list(empresas[0].keys())
+                            
+                            # Eliminar campos anidados complejos
+                            if 'sentimiento_colaborativo' in campos:
+                                campos.remove('sentimiento_colaborativo')
+                            if 'resenas_recientes' in campos:
+                                campos.remove('resenas_recientes')
+                            
+                            writer = csv.DictWriter(f, fieldnames=campos)
+                            writer.writeheader()
+                            
+                            for empresa in empresas:
+                                # Crear una versión plana del diccionario
+                                empresa_plana = {k: v for k, v in empresa.items() if k in campos}
+                                writer.writerow(empresa_plana)
+                    
+                    # Exportar reseñas
+                    ruta_resenas = f"exports/resenas_{timestamp}.csv"
+                    with open(ruta_resenas, 'w', encoding='utf-8', newline='') as f:
+                        if resenas:
+                            # Obtener campos (aplanando estructura)
+                            campos = list(resenas[0].keys())
+                            
+                            # Eliminar campos anidados complejos
+                            if 'sentimiento' in campos:
+                                campos.remove('sentimiento')
+                            
+                            # Añadir campos planos para sentimiento
+                            campos.extend(['sentimiento_tipo', 'sentimiento_valor'])
+                            
+                            writer = csv.DictWriter(f, fieldnames=campos)
+                            writer.writeheader()
+                            
+                            for resena in resenas:
+                                # Crear una versión plana del diccionario
+                                resena_plana = {k: v for k, v in resena.items() if k in campos}
+                                
+                                # Añadir campos de sentimiento aplanados
+                                if 'sentimiento' in resena and isinstance(resena['sentimiento'], dict):
+                                    resena_plana['sentimiento_tipo'] = resena['sentimiento'].get('tipo', '')
+                                    resena_plana['sentimiento_valor'] = resena['sentimiento'].get('valor', '')
+                                
+                                writer.writerow(resena_plana)
+                    
+                    return True, "Datos exportados con éxito", f"Empresas: {ruta_empresas}, Reseñas: {ruta_resenas}"
+                
+            except Exception as e:
+                return False, f"Error al exportar datos: {str(e)}", None
+
+
+# Ejemplo de uso
+if __name__ == "__main__":
+    # Crear instancia
+    gestor = GestionReseñas()
+    
+    # Agregar empresa de ejemplo
+    exito, mensaje, empresa = gestor.agregar_empresa(
+        nombre="Empresa de Prueba",
+        rubro="Tecnología",
+        region="Santiago",
+        descripcion="Empresa para testeo del sistema"
+    )
+    
+    print(f"Agregar empresa: {mensaje}")
+    
+    if exito and empresa:
+        # Crear una reseña
+        exito_resena, mensaje_resena, resena = gestor.crear_resena(
+            usuario_id="user123",
+            empresa_id=empresa["id"],
+            texto="Esta es una reseña de prueba para la empresa. Me gustó mucho el servicio y la atención fue muy profesional. Recomendaría sus productos a cualquiera.",
+            rating=4.5,
+            es_cliente=True
+        )
+        
+        print(f"Crear reseña: {mensaje_resena}")
+        
+        if exito_resena:
+            # Obtener reseñas de la empresa
+            resenas = gestor.obtener_resenas_empresa(empresa["id"])
+            print(f"Número de reseñas: {len(resenas)}")
+            
+            # Exportar datos
+            exito_export, mensaje_export, ruta = gestor.exportar_datos()
+            print(f"Exportar datos: {mensaje_export}")
+            if exito_export:
+                print(f"Datos exportados a: {ruta}")
