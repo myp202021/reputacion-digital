@@ -1,0 +1,248 @@
+# Sistema de Índice de Reputación Digital Colaborativo
+
+Un sistema completo para analizar y monitorear la reputación digital de empresas chilenas, combinando análisis automático con reseñas colaborativas de usuarios.
+
+## 📋 Características Principales
+
+- **Análisis automático de reputación** basado en Google My Business, redes sociales, foros y medios de prensa
+- **Sistema colaborativo de reseñas** con validación y análisis de sentimiento
+- **Autenticación de usuarios** con email/contraseña o Google
+- **Índice de reputación combinado** (0-100) que integra fuentes automáticas y colaborativas
+- **Exploración y búsqueda** de empresas por nombre o rubro
+- **Ranking por industria** para comparar empresas en el mismo sector
+- **Visualizaciones interactivas** de resultados e índices
+- **Exportación de datos** en formatos JSON y CSV
+
+## 🧩 Arquitectura del Sistema
+
+El sistema está organizado en varios módulos independientes que trabajan juntos:
+
+1. **Core de Análisis** (`indice_reputacion_digital.py`) - Módulo original para scraping y análisis automático.
+2. **Autenticación** (`auth_module.py`) - Gestión de usuarios, registro y sesiones.
+3. **Reseñas** (`reviews_module.py`) - Sistema de reseñas colaborativas y análisis de sentimiento.
+4. **Aplicación Web** (`app_colaborativa.py`) - Interfaz web completa que integra todos los componentes.
+5. **Integración Firebase** (opcional) - Conexión con servicios en la nube.
+
+## 💻 Requisitos
+
+- Python 3.8 o superior
+- Dependencias listadas en `requirements.txt`
+- Opcionalmente: Cuenta de Firebase (para despliegue en la nube)
+
+## 🛠️ Instalación
+
+### 1. Clonar el repositorio
+
+```bash
+git clone https://github.com/tu-usuario/reputacion-digital-colaborativa.git
+cd reputacion-digital-colaborativa
+```
+
+### 2. Crear un entorno virtual
+
+```bash
+python -m venv venv
+
+# Activar en Windows
+venv\Scripts\activate
+
+# Activar en macOS/Linux
+source venv/bin/activate
+```
+
+### 3. Instalar dependencias
+
+```bash
+pip install -r requirements.txt
+```
+
+El archivo `requirements.txt` debe contener:
+
+```
+flask==2.3.3
+pandas==2.1.0
+numpy==1.24.3
+matplotlib==3.7.2
+plotly==5.16.1
+transformers==4.34.0
+requests==2.31.0
+beautifulsoup4==4.12.2
+fake-useragent==1.2.1
+firebase-admin==6.2.0
+nltk==3.8.1
+```
+
+### 4. Estructura de directorios
+
+Asegúrate de tener la siguiente estructura de directorios:
+
+```
+reputacion-digital-colaborativa/
+├── app_colaborativa.py      # Aplicación principal Flask
+├── indice_reputacion_digital.py  # Módulo core de análisis
+├── auth_module.py           # Módulo de autenticación
+├── reviews_module.py        # Módulo de reseñas colaborativas
+├── firebase_integration.py  # Integración con Firebase (opcional)
+├── requirements.txt         # Dependencias
+├── data/                    # Datos locales (modo local)
+├── static/                  # Archivos estáticos (CSS, JS)
+│   ├── css/
+│   │   └── style.css
+│   └── js/
+│       └── main.js
+├── templates/               # Plantillas HTML
+│   ├── base.html
+│   ├── index.html
+│   └── ...
+└── exports/                 # Exportaciones de datos
+```
+
+## 🚀 Uso
+
+### Modo Local
+
+Para ejecutar la aplicación en modo local:
+
+```bash
+python app_colaborativa.py
+```
+
+Esto iniciará el servidor web en http://localhost:5000.
+
+### Modo Firebase
+
+Para ejecutar la aplicación con Firebase:
+
+1. Crea un proyecto en [Firebase Console](https://console.firebase.google.com/)
+2. Descarga el archivo de credenciales y guárdalo como `firebase-credentials.json` 
+3. Habilita Authentication, Firestore y Storage
+4. Ejecuta la aplicación con el modo Firebase:
+
+```bash
+python app_colaborativa.py --modo firebase --config firebase-credentials.json
+```
+
+## 💡 Modos de Funcionamiento
+
+### 🔄 Flujo de trabajo para usuarios
+
+1. **Registro/Login**: Los usuarios pueden registrarse con email+contraseña o vía Google
+2. **Buscar empresas**: Explorar por nombre o rubro
+3. **Ver perfil de empresa**: Consultar índice de reputación y reseñas
+4. **Dejar reseña**: Compartir experiencia (mínimo 20 palabras)
+5. **Votar reseñas**: Marcar reseñas de otros usuarios como útiles
+6. **Reportar contenido**: Notificar reseñas inapropiadas
+
+### 🧪 Cálculo del índice de reputación
+
+El índice final (0-100) combina:
+
+- **Índice automático** (70-90%): Datos de GMB, redes sociales, foros y medios
+- **Índice colaborativo** (10-30%): Reseñas de usuarios verificados
+
+El peso del componente colaborativo aumenta con el volumen de reseñas (máximo 30%).
+
+## 🔒 Seguridad y Validación
+
+- **Autenticación**: Sistema seguro con Firebase Auth o local
+- **Validación de reseñas**: 
+  - Mínimo 20 palabras
+  - Máximo 1 reseña cada 30 días por empresa
+  - Detección de texto genérico o spam
+- **Moderación**: Sistema de reportes para contenido inapropiado
+
+## 🖥️ Personalización
+
+### Cambiar ponderaciones de componentes
+
+Modifica las ponderaciones en `indice_reputacion_digital.py`:
+
+```python
+CONFIG = {
+    "ponderaciones": {
+        "rating_gmb": 0.30,         # Cambiar según necesidad
+        "volumen_comentarios": 0.10,
+        "sentimiento_foros": 0.20,
+        "sentimiento_noticias": 0.30,
+        "tendencia_reciente": 0.10
+    },
+    # ...
+}
+```
+
+### Agregar fuentes de datos
+
+Para agregar nuevas fuentes, crea métodos adicionales en `indice_reputacion_digital.py`:
+
+```python
+def buscar_nueva_fuente(self):
+    """
+    Busca menciones de la empresa en la nueva fuente.
+    """
+    # Implementar scraping o API
+    # ...
+    return datos
+```
+
+## 📱 Despliegue en producción
+
+### Firebase Hosting y Cloud Functions
+
+1. Instala Firebase CLI:
+```bash
+npm install -g firebase-tools
+```
+
+2. Inicializa el proyecto:
+```bash
+firebase login
+firebase init
+```
+
+3. Estructura para Cloud Functions:
+```
+functions/
+├── main.py           # Aplicación Flask adaptada
+├── requirements.txt  # Dependencias
+└── ...
+```
+
+4. Despliega:
+```bash
+firebase deploy
+```
+
+### Heroku
+
+1. Crea un `Procfile`:
+```
+web: gunicorn app_colaborativa:app
+```
+
+2. Despliega en Heroku:
+```bash
+heroku create
+git push heroku main
+```
+
+## 🤝 Contribución
+
+Las contribuciones son bienvenidas. Para contribuir:
+
+1. Haz un Fork del repositorio
+2. Crea una rama para tu característica (`git checkout -b feature/nueva-caracteristica`)
+3. Realiza tus cambios y haz commit (`git commit -m 'Añadir nueva característica'`)
+4. Haz push a la rama (`git push origin feature/nueva-caracteristica`)
+5. Abre un Pull Request
+
+## 📄 Licencia
+
+Este proyecto está licenciado bajo la Licencia MIT - ver el archivo [LICENSE](LICENSE) para más detalles.
+
+## 📧 Contacto
+
+Para preguntas o soporte, contacta a [tu-email@ejemplo.com](mailto:tu-email@ejemplo.com)
+
+---
+
+Desarrollado con ❤️ para empresas chilenas
