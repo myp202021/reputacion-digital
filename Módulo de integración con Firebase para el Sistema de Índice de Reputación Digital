@@ -1,0 +1,494 @@
+"""
+Módulo de integración con Firebase para el Sistema de Índice de Reputación Digital
+=================================================================================
+Este módulo permite integrar el sistema con Firebase para almacenamiento y despliegue
+en la nube.
+"""
+
+import firebase_admin
+from firebase_admin import credentials, firestore, storage
+import os
+import json
+import datetime
+import tempfile
+import plotly
+import plotly.io as pio
+from indice_reputacion_digital import IndiceReputacionDigital
+
+class FirebaseIntegration:
+    """
+    Clase para integrar el sistema de reputación digital con Firebase
+    """
+    
+    def __init__(self, credenciales_path='firebase-credentials.json'):
+        """
+        Inicializa la conexión con Firebase.
+        
+        Args:
+            credenciales_path (str): Ruta al archivo de credenciales de Firebase.
+        """
+        try:
+            # Inicializar Firebase si no está ya inicializado
+            if not firebase_admin._apps:
+                self.cred = credentials.Certificate(credenciales_path)
+                firebase_admin.initialize_app(self.cred, {
+                    'storageBucket': 'reputacion-digital.appspot.com'
+                })
+            
+            # Inicializar Firestore y Storage
+            self.db = firestore.client()
+            self.bucket = storage.bucket()
+            
+            print("✓ Conexión con Firebase establecida correctamente")
+        except Exception as e:
+            print(f"Error al inicializar Firebase: {e}")
+            raise
+    
+    def guardar_analisis(self, analizador):
+        """
+        Guarda los resultados de un análisis en Firestore y Storage.
+        
+        Args:
+            analizador (IndiceReputacionDigital): Instancia del analizador con datos procesados.
+            
+        Returns:
+            str: ID del documento creado en Firestore.
+        """
+        try:
+            # Generar ID único
+            timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+            doc_id = f"{analizador.nombre_empresa.replace(' ', '_').lower()}_{timestamp}"
+            
+            # Preparar datos para Firestore
+            datos_firestore = {
+                'empresa': analizador.nombre_empresa,
+                'region': analizador.region,
+                'rubro': analizador.rubro,
+                'fecha_analisis': datetime.datetime.now(),
+                'indice_final': analizador.indice_final,
+                'subindices': analizador.subindices,
+                'alertas': analizador.alertas,
+                'comentarios_destacados': analizador.comentarios_destacados
+            }
+            
+            # Guardar en Firestore
+            self.db.collection('analisis').document(doc_id).set(datos_firestore)
+            print(f"✓ Datos guardados en Firestore con ID: {doc_id}")
+            
+            # Guardar gráficos en Storage
+            self._guardar_graficos(analizador, doc_id)
+            
+            return doc_id
+            
+        except Exception as e:
+            print(f"Error al guardar análisis en Firebase: {e}")
+            raise
+    
+    def _guardar_graficos(self, analizador, doc_id):
+        """
+        Guarda los gráficos generados en Cloud Storage.
+        
+        Args:
+            analizador (IndiceReputacionDigital): Instancia del analizador.
+            doc_id (str): ID del documento en Firestore.
+        """
+        try:
+            # Generar gráficos con Plotly
+            graficos = analizador.generar_graficos_plotly()
+            
+            # Guardar cada gráfico como imagen y JSON
+            for nombre, figura in graficos.items():
+                # Guardar como JSON
+                json_path = f"graficos/{doc_id}/{nombre}.json"
+                json_data = pio.to_json(figura)
+                
+                blob = self.bucket.blob(json_path)
+                blob.upload_from_string(json_data, content_type='application/json')
+                
+                # Guardar como imagen PNG
+                with tempfile.NamedTemporaryFile(suffix='.png') as tmp:
+                    figura.write_image(tmp.name)
+                    img_path = f"graficos/{doc_id}/{nombre}.png"
+                    blob = self.bucket.blob(img_path)
+                    blob.upload_from_filename(tmp.name, content_type='image/png')
+            
+            # Actualizar documento en Firestore con URLs de los gráficos
+            graficos_urls = {
+                'json': {nombre: f"https://storage.googleapis.com/{self.bucket.name}/graficos/{doc_id}/{nombre}.json" 
+                         for nombre in graficos.keys()},
+                'png': {nombre: f"https://storage.googleapis.com/{self.bucket.name}/graficos/{doc_id}/{nombre}.png" 
+                        for nombre in graficos.keys()}
+            }
+            
+            self.db.collection('analisis').document(doc_id).update({
+                'graficos_urls': graficos_urls
+            })
+            
+            print(f"✓ Gráficos guardados en Storage para análisis {doc_id}")
+            
+        except Exception as e:
+            print(f"Error al guardar gráficos en Storage: {e}")
+            raise
+    
+    def obtener_analisis(self, doc_id):
+        """
+        Obtiene los datos de un análisis desde Firestore.
+        
+        Args:
+            doc_id (str): ID del documento en Firestore.
+            
+        Returns:
+            dict: Datos del análisis.
+        """
+        try:
+            doc_ref = self.db.collection('analisis').document(doc_id)
+            doc = doc_ref.get()
+            
+            if doc.exists:
+                return doc.to_dict()
+            else:
+                print(f"No se encontró el análisis con ID: {doc_id}")
+                return None
+                
+        except Exception as e:
+            print(f"Error al obtener análisis desde Firestore: {e}")
+            raise
+    
+    def listar_analisis(self, limite=20, empresa=None):
+        """
+        Lista los análisis más recientes desde Firestore.
+        
+        Args:
+            limite (int): Número máximo de análisis a recuperar.
+            empresa (str, opcional): Filtrar por nombre de empresa.
+            
+        Returns:
+            list: Lista de análisis.
+        """
+        try:
+            query = self.db.collection('analisis')
+            
+            if empresa:
+                query = query.where('empresa', '==', empresa)
+                
+            query = query.order_by('fecha_analisis', direction=firestore.Query.DESCENDING).limit(limite)
+            docs = query.stream()
+            
+            analisis = []
+            for doc in docs:
+                data = doc.to_dict()
+                data['id'] = doc.id
+                analisis.append(data)
+            
+            return analisis
+            
+        except Exception as e:
+            print(f"Error al listar análisis desde Firestore: {e}")
+            raise
+    
+    def eliminar_analisis(self, doc_id):
+        """
+        Elimina un análisis de Firestore y sus gráficos de Storage.
+        
+        Args:
+            doc_id (str): ID del documento en Firestore.
+            
+        Returns:
+            bool: True si se eliminó correctamente, False en caso contrario.
+        """
+        try:
+            # Eliminar gráficos de Storage
+            blobs = self.bucket.list_blobs(prefix=f"graficos/{doc_id}/")
+            for blob in blobs:
+                blob.delete()
+            
+            # Eliminar documento de Firestore
+            self.db.collection('analisis').document(doc_id).delete()
+            
+            print(f"✓ Análisis {doc_id} eliminado correctamente")
+            return True
+            
+        except Exception as e:
+            print(f"Error al eliminar análisis {doc_id}: {e}")
+            return False
+
+# Función para ejecutar análisis y guardar en Firebase
+def ejecutar_y_guardar_en_firebase(nombre_empresa, region=None, rubro=None, credenciales_path='firebase-credentials.json'):
+    """
+    Ejecuta un análisis completo y guarda los resultados en Firebase.
+    
+    Args:
+        nombre_empresa (str): Nombre de la empresa a analizar.
+        region (str, opcional): Región o ciudad donde opera la empresa.
+        rubro (str, opcional): Sector industrial o rubro de la empresa.
+        credenciales_path (str): Ruta al archivo de credenciales de Firebase.
+        
+    Returns:
+        tuple: (ID del documento en Firebase, índice final)
+    """
+    try:
+        # Inicializar analizador
+        analizador = IndiceReputacionDigital(nombre_empresa, region, rubro)
+        
+        # Ejecutar análisis completo
+        analizador.ejecutar_analisis_completo()
+        
+        # Guardar en Firebase
+        firebase = FirebaseIntegration(credenciales_path)
+        doc_id = firebase.guardar_analisis(analizador)
+        
+        return doc_id, analizador.indice_final
+        
+    except Exception as e:
+        print(f"Error al ejecutar y guardar análisis: {e}")
+        raise
+
+# Función para desplegar Cloud Functions (código de ejemplo)
+def crear_cloud_function():
+    """
+    Genera el código para una Cloud Function que analizará empresas
+    bajo demanda o con un cronograma.
+    
+    Returns:
+        str: Código de la Cloud Function.
+    """
+    codigo = """
+    # Cloud Function para ejecutar análisis de reputación
+    import functions_framework
+    from firebase_admin import initialize_app, firestore
+    import json
+    from indice_reputacion_digital import IndiceReputacionDigital
+    import datetime
+    import tempfile
+    from firebase_admin import storage
+
+    # Inicializar Firebase (automático en Cloud Functions)
+    initialize_app()
+
+    @functions_framework.http
+    def analizar_empresa(request):
+        """
+        Cloud Function HTTP para analizar la reputación de una empresa.
+        
+        Args:
+            request: Objeto request de Flask con datos de la empresa.
+            
+        Returns:
+            dict: Resultados del análisis.
+        """
+        # Configurar CORS para solicitudes desde cualquier origen
+        headers = {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type',
+        }
+        
+        # Manejar solicitudes preflight OPTIONS
+        if request.method == 'OPTIONS':
+            return ('', 204, headers)
+        
+        try:
+            # Obtener datos de la solicitud
+            request_json = request.get_json(silent=True)
+            
+            if not request_json or 'nombre_empresa' not in request_json:
+                return (json.dumps({
+                    'error': True,
+                    'mensaje': 'Debe proporcionar el nombre de la empresa en formato JSON'
+                }), 400, headers)
+            
+            # Extraer parámetros
+            nombre_empresa = request_json['nombre_empresa']
+            region = request_json.get('region')
+            rubro = request_json.get('rubro')
+            
+            # Inicializar analizador
+            analizador = IndiceReputacionDigital(nombre_empresa, region, rubro)
+            
+            # Ejecutar análisis completo
+            analizador.buscar_gmb()
+            analizador.buscar_reclamos()
+            analizador.buscar_noticias()
+            analizador.analizar_tendencia()
+            analizador.calcular_indice()
+            
+            # Generar gráficos
+            graficos = analizador.generar_graficos_plotly()
+            
+            # Generar ID único para este análisis
+            timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+            doc_id = f"{nombre_empresa.replace(' ', '_').lower()}_{timestamp}"
+            
+            # Preparar datos para Firestore
+            datos_firestore = {
+                'empresa': nombre_empresa,
+                'region': region,
+                'rubro': rubro,
+                'fecha_analisis': datetime.datetime.now(),
+                'indice_final': analizador.indice_final,
+                'subindices': analizador.subindices,
+                'alertas': analizador.alertas,
+                'comentarios_destacados': analizador.comentarios_destacados
+            }
+            
+            # Guardar en Firestore
+            db = firestore.client()
+            db.collection('analisis').document(doc_id).set(datos_firestore)
+            
+            # URL base para acceder a los resultados
+            url_resultados = f"https://reputacion-digital.web.app/resultados/{doc_id}"
+            
+            # Devolver respuesta
+            return (json.dumps({
+                'error': False,
+                'mensaje': 'Análisis completado con éxito',
+                'id': doc_id,
+                'indice_final': analizador.indice_final,
+                'url_resultados': url_resultados
+            }), 200, headers)
+            
+        except Exception as e:
+            return (json.dumps({
+                'error': True,
+                'mensaje': f'Error al realizar el análisis: {str(e)}'
+            }), 500, headers)
+
+    @functions_framework.http
+    def obtener_resultados(request):
+        """
+        Cloud Function HTTP para obtener los resultados de un análisis previo.
+        
+        Args:
+            request: Objeto request de Flask con el ID del análisis.
+            
+        Returns:
+            dict: Resultados del análisis.
+        """
+        # Configurar CORS
+        headers = {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type',
+        }
+        
+        # Manejar solicitudes preflight OPTIONS
+        if request.method == 'OPTIONS':
+            return ('', 204, headers)
+        
+        try:
+            # Obtener ID del análisis
+            doc_id = request.args.get('id')
+            
+            if not doc_id:
+                return (json.dumps({
+                    'error': True,
+                    'mensaje': 'Debe proporcionar el ID del análisis'
+                }), 400, headers)
+            
+            # Obtener datos desde Firestore
+            db = firestore.client()
+            doc_ref = db.collection('analisis').document(doc_id)
+            doc = doc_ref.get()
+            
+            if not doc.exists:
+                return (json.dumps({
+                    'error': True,
+                    'mensaje': 'No se encontró el análisis solicitado'
+                }), 404, headers)
+            
+            # Convertir datos a formato JSON serializable
+            datos = doc.to_dict()
+            
+            # Convertir objetos datetime a strings
+            if 'fecha_analisis' in datos and isinstance(datos['fecha_analisis'], datetime.datetime):
+                datos['fecha_analisis'] = datos['fecha_analisis'].strftime('%d/%m/%Y %H:%M:%S')
+            
+            return (json.dumps(datos), 200, headers)
+            
+        except Exception as e:
+            return (json.dumps({
+                'error': True,
+                'mensaje': f'Error al obtener resultados: {str(e)}'
+            }), 500, headers)
+
+    # Cloud Function programada para análisis automático (Cloud Scheduler)
+    @functions_framework.cloud_event
+    def analisis_programado(cloud_event):
+        """
+        Cloud Function ejecutada por Cloud Scheduler para analizar automáticamente
+        un conjunto predefinido de empresas.
+        
+        Args:
+            cloud_event: Evento de Cloud Scheduler.
+        """
+        try:
+            # Lista de empresas a analizar automáticamente
+            empresas = [
+                {"nombre": "Falabella", "rubro": "Retail"},
+                {"nombre": "Banco de Chile", "rubro": "Finanzas"},
+                {"nombre": "Entel", "rubro": "Telecomunicaciones"},
+                {"nombre": "Latam Airlines", "rubro": "Transporte"},
+                {"nombre": "Copec", "rubro": "Energía"}
+            ]
+            
+            db = firestore.client()
+            resultados = []
+            
+            for empresa in empresas:
+                # Comprobar si ya se analizó hoy
+                hoy = datetime.datetime.now().strftime('%Y-%m-%d')
+                query = db.collection('analisis').where('empresa', '==', empresa['nombre']).order_by('fecha_analisis', direction=firestore.Query.DESCENDING).limit(1)
+                docs = list(query.stream())
+                
+                if docs and docs[0].to_dict()['fecha_analisis'].strftime('%Y-%m-%d') == hoy:
+                    print(f"La empresa {empresa['nombre']} ya fue analizada hoy. Omitiendo.")
+                    continue
+                
+                # Realizar análisis
+                analizador = IndiceReputacionDigital(empresa['nombre'], rubro=empresa['rubro'])
+                analizador.ejecutar_analisis_completo()
+                
+                # Guardar resultados
+                timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+                doc_id = f"{empresa['nombre'].replace(' ', '_').lower()}_{timestamp}"
+                
+                datos_firestore = {
+                    'empresa': empresa['nombre'],
+                    'region': None,
+                    'rubro': empresa['rubro'],
+                    'fecha_analisis': datetime.datetime.now(),
+                    'indice_final': analizador.indice_final,
+                    'subindices': analizador.subindices,
+                    'alertas': analizador.alertas,
+                    'comentarios_destacados': analizador.comentarios_destacados
+                }
+                
+                db.collection('analisis').document(doc_id).set(datos_firestore)
+                
+                resultados.append({
+                    'empresa': empresa['nombre'],
+                    'indice': analizador.indice_final,
+                    'id': doc_id
+                })
+            
+            # Guardar resumen de ejecución
+            db.collection('logs').add({
+                'tipo': 'analisis_programado',
+                'fecha': datetime.datetime.now(),
+                'empresas_analizadas': len(resultados),
+                'resultados': resultados
+            })
+            
+            print(f"Análisis programado completado. {len(resultados)} empresas analizadas.")
+            
+        except Exception as e:
+            print(f"Error en análisis programado: {e}")
+            
+            # Registrar error
+            db = firestore.client()
+            db.collection('logs').add({
+                'tipo': 'error',
+                'fecha': datetime.datetime.now(),
+                'mensaje': str(e)
+            })
+    """
