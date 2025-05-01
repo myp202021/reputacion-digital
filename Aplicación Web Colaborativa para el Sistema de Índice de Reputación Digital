@@ -1,0 +1,818 @@
+"""
+Aplicación Web Colaborativa para el Sistema de Índice de Reputación Digital
+===========================================================================
+Este módulo implementa una aplicación web Flask que integra todos los componentes
+del sistema de reputación digital, incluyendo autenticación, gestión de reseñas,
+y análisis de reputación.
+"""
+
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
+from flask import session as flask_session, g, abort, make_response, send_file
+import os
+import json
+import datetime
+import uuid
+from typing import Dict, List, Optional, Any, Tuple, Union
+import logging
+from functools import wraps
+
+# Importar módulos del sistema
+from auth_module import AutenticacionUsuarios
+from reviews_module import GestionReseñas
+from indice_reputacion_digital import IndiceReputacionDigital
+
+# Configuración de logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("app.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+class AppReputacionDigital:
+    """
+    Clase principal que implementa la aplicación web colaborativa
+    para el sistema de reputación digital.
+    """
+    
+    def __init__(self, modo_db="local", firebase_config=None):
+        """
+        Inicializa la aplicación web.
+        
+        Args:
+            modo_db (str): Modo de base de datos ("firebase" o "local")
+            firebase_config (str, opcional): Ruta al archivo de configuración de Firebase
+        """
+        self.app = Flask(__name__)
+        self.app.secret_key = os.environ.get('SECRET_KEY', 'reputacion_digital_secret_key')
+        
+        # Configurar carpetas de templates y static
+        self.app.template_folder = 'templates'
+        self.app.static_folder = 'static'
+        
+        # Inicializar componentes
+        self.modo_db = modo_db
+        self.firebase_config = firebase_config
+        self.auth = AutenticacionUsuarios(modo=modo_db, firebase_config=firebase_config)
+        self.reviews = GestionReseñas(modo=modo_db)
+        
+        # Asegurarse de que exista el directorio para datos de resúmenes de reputación
+        if not os.path.exists('data'):
+            os.makedirs('data')
+        
+        # Configurar rutas
+        self._configurar_rutas()
+        
+        logger.info(f"Aplicación inicializada en modo: {modo_db}")
+    
+    def _configurar_rutas(self):
+        """
+        Configura todas las rutas de la aplicación web.
+        """
+        # Middleware para verificar usuario en cada petición
+        @self.app.before_request
+        def cargar_usuario_logueado():
+            g.usuario = None
+            token = request.cookies.get('session_token')
+            
+            if token:
+                sesion_valida, usuario = self.auth.verificar_sesion(token)
+                if sesion_valida and usuario:
+                    g.usuario = usuario
+        
+        # Decorator para requerir inicio de sesión
+        def login_requerido(f):
+            @wraps(f)
+            def decorated_function(*args, **kwargs):
+                if g.usuario is None:
+                    flash('Debe iniciar sesión para acceder a esta página', 'warning')
+                    return redirect(url_for('login', next=request.url))
+                return f(*args, **kwargs)
+            return decorated_function
+        
+        # Página principal
+        @self.app.route('/')
+        def index():
+            # Obtener empresas destacadas
+            empresas_destacadas = self.reviews.obtener_ranking_empresas(limite=4)
+            
+            # Obtener estadísticas generales (simuladas por ahora)
+            estadisticas = {
+                'total_empresas': 120,
+                'total_resenas': 1850,
+                'usuarios_activos': 437,
+                'rubros_disponibles': 15
+            }
+            
+            return render_template(
+                'index.html', 
+                usuario=g.usuario,
+                empresas_destacadas=empresas_destacadas,
+                estadisticas=estadisticas
+            )
+        
+        # Login
+        @self.app.route('/login', methods=['GET', 'POST'])
+        def login():
+            if request.method == 'POST':
+                email = request.form.get('email')
+                password = request.form.get('password')
+                
+                exito, mensaje, sesion = self.auth.iniciar_sesion(email, password)
+                
+                if exito:
+                    response = make_response(redirect(request.args.get('next') or url_for('index')))
+                    response.set_cookie('session_token', sesion['token'], httponly=True, max_age=86400)
+                    flash('Inicio de sesión exitoso', 'success')
+                    return response
+                else:
+                    flash(mensaje, 'danger')
+            
+            return render_template('login.html')
+        
+        # Login con Google
+        @self.app.route('/login/google', methods=['POST'])
+        def login_google():
+            # En una implementación real, este endpoint recibiría el token ID de Google
+            # y lo verificaría con Firebase Authentication
+            
+            # Simulación simplificada
+            token = request.form.get('google_token')
+            email = request.form.get('email')
+            nombre = request.form.get('nombre')
+            
+            if not email or not nombre:
+                flash('Datos de Google incompletos', 'danger')
+                return redirect(url_for('login'))
+            
+            # Verificar si el usuario existe
+            usuarios = []
+            if os.path.exists('data/usuarios.json'):
+                with open('data/usuarios.json', 'r', encoding='utf-8') as f:
+                    usuarios = json.load(f)
+            
+            usuario_existente = None
+            for u in usuarios:
+                if u.get('email') == email and u.get('via_google', False):
+                    usuario_existente = u
+                    break
+            
+            if not usuario_existente:
+                # Registrar nuevo usuario con Google
+                exito, mensaje, usuario = self.auth.registrar_usuario(
+                    email=email,
+                    password="",  # No se usa para Google
+                    nombre=nombre,
+                    acepta_terminos=True,  # Asumimos que acepta al usar Google
+                    via_google=True
+                )
+                
+                if not exito:
+                    flash(mensaje, 'danger')
+                    return redirect(url_for('login'))
+            
+            # Iniciar sesión
+            exito, mensaje, sesion = self.auth.iniciar_sesion(
+                email=email,
+                password="",
+                via_google=True
+            )
+            
+            if exito:
+                response = make_response(redirect(request.args.get('next') or url_for('index')))
+                response.set_cookie('session_token', sesion['token'], httponly=True, max_age=86400)
+                flash('Inicio de sesión con Google exitoso', 'success')
+                return response
+            else:
+                flash(mensaje, 'danger')
+                return redirect(url_for('login'))
+        
+        # Registro
+        @self.app.route('/registro', methods=['GET', 'POST'])
+        def registro():
+            if request.method == 'POST':
+                email = request.form.get('email')
+                password = request.form.get('password')
+                confirm_password = request.form.get('confirm_password')
+                nombre = request.form.get('nombre')
+                acepta_terminos = request.form.get('acepta_terminos') == 'on'
+                
+                # Validaciones básicas
+                if not email or not password or not nombre:
+                    flash('Todos los campos son obligatorios', 'danger')
+                    return render_template('registro.html')
+                
+                if password != confirm_password:
+                    flash('Las contraseñas no coinciden', 'danger')
+                    return render_template('registro.html')
+                
+                if not acepta_terminos:
+                    flash('Debe aceptar los términos y condiciones', 'danger')
+                    return render_template('registro.html')
+                
+                # Registrar usuario
+                exito, mensaje, usuario = self.auth.registrar_usuario(
+                    email=email,
+                    password=password,
+                    nombre=nombre,
+                    acepta_terminos=acepta_terminos
+                )
+                
+                if exito:
+                    flash('Registro exitoso. Ahora puede iniciar sesión', 'success')
+                    return redirect(url_for('login'))
+                else:
+                    flash(mensaje, 'danger')
+            
+            return render_template('registro.html')
+        
+        # Logout
+        @self.app.route('/logout')
+        def logout():
+            token = request.cookies.get('session_token')
+            if token:
+                self.auth.cerrar_sesion(token)
+            
+            response = make_response(redirect(url_for('index')))
+            response.delete_cookie('session_token')
+            flash('Sesión cerrada con éxito', 'success')
+            return response
+        
+        # Términos y condiciones
+        @self.app.route('/terminos')
+        def terminos():
+            return render_template('terminos.html')
+        
+        # Buscar empresas
+        @self.app.route('/buscar')
+        def buscar():
+            query = request.args.get('q', '')
+            rubro = request.args.get('rubro', '')
+            
+            resultados = []
+            
+            if query:
+                resultados = self.reviews.buscar_empresa_por_nombre(query)
+            elif rubro:
+                resultados = self.reviews.buscar_empresa_por_rubro(rubro)
+            
+            # Obtener lista de rubros para el filtro
+            rubros = self._obtener_lista_rubros()
+            
+            return render_template(
+                'buscar.html',
+                query=query,
+                rubro_seleccionado=rubro,
+                rubros=rubros,
+                resultados=resultados,
+                usuario=g.usuario
+            )
+        
+        # Perfil de empresa
+        @self.app.route('/empresa/<empresa_id>')
+        def perfil_empresa(empresa_id):
+            # Obtener datos de la empresa
+            empresa = self.reviews.obtener_empresa(empresa_id)
+            
+            if not empresa:
+                flash('Empresa no encontrada', 'danger')
+                return redirect(url_for('index'))
+            
+            # Obtener reseñas colaborativas
+            resenas = self.reviews.obtener_resenas_empresa(empresa_id)
+            
+            # Obtener índice de reputación automático si está disponible
+            indice_automatico = self._obtener_indice_reputacion(empresa_id)
+            
+            # Calcular índice combinado
+            indice_colaborativo = empresa.get('rating_colaborativo', 0) * 20  # Convertir de 0-5 a 0-100
+            if indice_colaborativo > 0:
+                # Si hay reseñas colaborativas, combinar ambos índices
+                num_resenas = empresa.get('num_resenas_colaborativas', 0)
+                peso_colaborativo = min(0.7, num_resenas * 0.05)  # Máximo 70% de peso colaborativo
+                
+                indice_final = (indice_automatico * (1 - peso_colaborativo) + 
+                               indice_colaborativo * peso_colaborativo)
+            else:
+                # Si no hay reseñas colaborativas, usar solo el índice automático
+                indice_final = indice_automatico
+            
+            # Actualizar el índice en la empresa
+            self._actualizar_indice_empresa(empresa_id, indice_final)
+            
+            # Preparar datos para la vista
+            datos_empresa = {
+                'id': empresa['id'],
+                'nombre': empresa['nombre'],
+                'rubro': empresa['rubro'],
+                'region': empresa.get('region', ''),
+                'descripcion': empresa.get('descripcion', ''),
+                'indice_reputacion': indice_final,
+                'rating_colaborativo': empresa.get('rating_colaborativo', 0),
+                'num_resenas': empresa.get('num_resenas_colaborativas', 0),
+                'sentimiento': empresa.get('sentimiento_colaborativo', {
+                    'positivo': 0,
+                    'neutro': 0,
+                    'negativo': 0
+                })
+            }
+            
+            # Determinar si el usuario ya ha dejado reseña reciente
+            puede_comentar = True
+            if g.usuario:
+                ultima_fecha = self.reviews._obtener_ultima_resena_usuario(
+                    g.usuario.get('uid'), empresa_id)
+                
+                if ultima_fecha:
+                    fecha_ultima = datetime.datetime.fromisoformat(ultima_fecha)
+                    fecha_actual = datetime.datetime.now()
+                    dias_transcurridos = (fecha_actual - fecha_ultima).days
+                    
+                    puede_comentar = dias_transcurridos >= 30
+            
+            return render_template(
+                'empresa.html',
+                empresa=datos_empresa,
+                resenas=resenas,
+                indice_automatico=indice_automatico,
+                indice_colaborativo=indice_colaborativo,
+                indice_final=indice_final,
+                usuario=g.usuario,
+                puede_comentar=puede_comentar
+            )
+        
+        # Crear reseña
+        @self.app.route('/empresa/<empresa_id>/resena', methods=['POST'])
+        @login_requerido
+        def crear_resena(empresa_id):
+            texto = request.form.get('texto')
+            rating = request.form.get('rating')
+            es_cliente = request.form.get('es_cliente') == 'on'
+            acepta_terminos = request.form.get('acepta_terminos') == 'on'
+            
+            # Validaciones básicas
+            if not texto or not rating:
+                flash('Por favor complete todos los campos', 'danger')
+                return redirect(url_for('perfil_empresa', empresa_id=empresa_id))
+            
+            if not acepta_terminos:
+                flash('Debe aceptar los términos y condiciones para publicar', 'danger')
+                return redirect(url_for('perfil_empresa', empresa_id=empresa_id))
+            
+            try:
+                rating = float(rating)
+            except:
+                flash('El rating debe ser un número válido', 'danger')
+                return redirect(url_for('perfil_empresa', empresa_id=empresa_id))
+            
+            # Crear reseña
+            exito, mensaje, resena = self.reviews.crear_resena(
+                usuario_id=g.usuario['uid'],
+                empresa_id=empresa_id,
+                texto=texto,
+                rating=rating,
+                es_cliente=es_cliente
+            )
+            
+            if exito:
+                flash('Reseña publicada con éxito', 'success')
+            else:
+                flash(mensaje, 'danger')
+            
+            return redirect(url_for('perfil_empresa', empresa_id=empresa_id))
+        
+        # Votar reseña útil
+        @self.app.route('/resena/<resena_id>/votar', methods=['POST'])
+        @login_requerido
+        def votar_resena(resena_id):
+            exito, mensaje = self.reviews.votar_resena_util(
+                resena_id=resena_id,
+                usuario_id=g.usuario['uid']
+            )
+            
+            return jsonify({
+                'exito': exito,
+                'mensaje': mensaje
+            })
+        
+        # Reportar reseña
+        @self.app.route('/resena/<resena_id>/reportar', methods=['POST'])
+        @login_requerido
+        def reportar_resena(resena_id):
+            motivo = request.form.get('motivo')
+            
+            exito, mensaje = self.reviews.reportar_resena(
+                resena_id=resena_id,
+                usuario_id=g.usuario['uid'],
+                motivo=motivo
+            )
+            
+            return jsonify({
+                'exito': exito,
+                'mensaje': mensaje
+            })
+        
+        # Perfil de usuario
+        @self.app.route('/perfil')
+        @login_requerido
+        def perfil_usuario():
+            # Obtener reseñas del usuario
+            resenas = self.reviews.obtener_resenas_usuario(g.usuario['uid'])
+            
+            return render_template(
+                'perfil.html',
+                usuario=g.usuario,
+                resenas=resenas
+            )
+        
+        # Ranking por industria
+        @self.app.route('/ranking')
+        def ranking():
+            rubro = request.args.get('rubro', '')
+            
+            # Obtener lista de rubros para el filtro
+            rubros = self._obtener_lista_rubros()
+            
+            # Obtener ranking
+            if rubro:
+                empresas = self.reviews.obtener_ranking_empresas(rubro=rubro, limite=20)
+            else:
+                empresas = self.reviews.obtener_ranking_empresas(limite=20)
+            
+            return render_template(
+                'ranking.html',
+                rubros=rubros,
+                rubro_seleccionado=rubro,
+                empresas=empresas,
+                usuario=g.usuario
+            )
+        
+        # Agregar empresa
+        @self.app.route('/agregar-empresa', methods=['GET', 'POST'])
+        @login_requerido
+        def agregar_empresa():
+            if request.method == 'POST':
+                nombre = request.form.get('nombre')
+                rubro = request.form.get('rubro')
+                region = request.form.get('region')
+                descripcion = request.form.get('descripcion')
+                
+                exito, mensaje, empresa = self.reviews.agregar_empresa(
+                    nombre=nombre,
+                    rubro=rubro,
+                    region=region,
+                    descripcion=descripcion
+                )
+                
+                if exito:
+                    flash('Empresa agregada con éxito', 'success')
+                    return redirect(url_for('perfil_empresa', empresa_id=empresa['id']))
+                else:
+                    flash(mensaje, 'danger')
+            
+            # Obtener lista de rubros para el selector
+            rubros = self._obtener_lista_rubros()
+            
+            return render_template(
+                'agregar_empresa.html',
+                rubros=rubros,
+                usuario=g.usuario
+            )
+        
+        # Exportar datos
+        @self.app.route('/exportar/<formato>')
+        @login_requerido
+        def exportar_datos(formato):
+            if formato not in ['json', 'csv']:
+                flash('Formato no soportado', 'danger')
+                return redirect(url_for('index'))
+            
+            exito, mensaje, ruta = self.reviews.exportar_datos(formato=formato)
+            
+            if not exito:
+                flash(mensaje, 'danger')
+                return redirect(url_for('index'))
+            
+            if formato == 'json':
+                return send_file(ruta, as_attachment=True)
+            else:
+                # Para CSV devolvemos mensaje con rutas
+                flash(f'Datos exportados: {ruta}', 'success')
+                return redirect(url_for('index'))
+        
+        # Error handlers
+        @self.app.errorhandler(404)
+        def pagina_no_encontrada(e):
+            return render_template('error.html', 
+                                 codigo=404, 
+                                 mensaje='Página no encontrada',
+                                 usuario=g.usuario), 404
+        
+        @self.app.errorhandler(500)
+        def error_interno(e):
+            return render_template('error.html', 
+                                 codigo=500, 
+                                 mensaje='Error interno del servidor',
+                                 usuario=g.usuario), 500
+    
+    def _obtener_lista_rubros(self) -> List[str]:
+        """
+        Obtiene la lista de rubros disponibles.
+        
+        Returns:
+            list: Lista de rubros
+        """
+        # Lista básica de rubros comunes
+        rubros_base = [
+            "Tecnología", "Retail", "Salud", "Educación", 
+            "Finanzas", "Telecomunicaciones", "Transporte",
+            "Alimentación", "Construcción", "Turismo",
+            "Inmobiliaria", "Entretenimiento", "Energía",
+            "Automotriz", "Textil"
+        ]
+        
+        # En una implementación real, esta lista se obtendría de la base de datos
+        # con conteo de empresas por rubro
+        
+        return sorted(rubros_base)
+    
+    def _obtener_indice_reputacion(self, empresa_id: str) -> float:
+        """
+        Obtiene el índice de reputación automático para una empresa.
+        
+        Args:
+            empresa_id (str): ID de la empresa
+            
+        Returns:
+            float: Índice de reputación (0-100)
+        """
+        # Verificar si ya tenemos un índice calculado
+        indices_path = 'data/indices_reputacion.json'
+        indices = {}
+        
+        if os.path.exists(indices_path):
+            with open(indices_path, 'r', encoding='utf-8') as f:
+                indices = json.load(f)
+        
+        # Si la empresa tiene un índice y es reciente (menos de 7 días), usarlo
+        if empresa_id in indices:
+            fecha_calculo = datetime.datetime.fromisoformat(indices[empresa_id]['fecha'])
+            dias_desde_calculo = (datetime.datetime.now() - fecha_calculo).days
+            
+            if dias_desde_calculo < 7:
+                return indices[empresa_id]['indice']
+        
+        # Si no hay índice o es antiguo, calcularlo
+        # En una implementación real, obtendríamos el nombre de la empresa
+        empresa_nombre = self._obtener_nombre_empresa(empresa_id)
+        
+        if not empresa_nombre:
+            # Si no encontramos la empresa, usar un valor predeterminado
+            return 50.0
+        
+        # Calcular índice usando el módulo existente
+        try:
+            analizador = IndiceReputacionDigital(empresa_nombre)
+            analizador.buscar_gmb()
+            analizador.buscar_reclamos()
+            analizador.buscar_noticias()
+            analizador.analizar_tendencia()
+            indice = analizador.calcular_indice()
+            
+            # Guardar para uso futuro
+            indices[empresa_id] = {
+                'indice': indice,
+                'fecha': datetime.datetime.now().isoformat()
+            }
+            
+            with open(indices_path, 'w', encoding='utf-8') as f:
+                json.dump(indices, f, indent=4)
+            
+            return indice
+            
+        except Exception as e:
+            logger.error(f"Error al calcular índice para {empresa_id}: {e}")
+            return 50.0  # Valor predeterminado en caso de error
+    
+    def _obtener_nombre_empresa(self, empresa_id: str) -> Optional[str]:
+        """
+        Obtiene el nombre de una empresa por su ID.
+        
+        Args:
+            empresa_id (str): ID de la empresa
+            
+        Returns:
+            str: Nombre de la empresa o None si no se encuentra
+        """
+        empresa = self.reviews.obtener_empresa(empresa_id)
+        
+        if empresa:
+            return empresa.get('nombre')
+        
+        return None
+    
+    def _actualizar_indice_empresa(self, empresa_id: str, indice: float) -> bool:
+        """
+        Actualiza el índice de reputación de una empresa.
+        
+        Args:
+            empresa_id (str): ID de la empresa
+            indice (float): Nuevo índice de reputación
+            
+        Returns:
+            bool: True si se actualizó correctamente
+        """
+        try:
+            # En modo Firebase, actualizar en Firestore
+            if self.modo_db == "firebase" and hasattr(self.reviews, 'db'):
+                self.reviews.db.collection('empresas').document(empresa_id).update({
+                    'indice_reputacion': indice,
+                    'ultima_actualizacion': datetime.datetime.now().isoformat()
+                })
+                return True
+            
+            # En modo local, actualizar en el archivo JSON
+            else:
+                empresas_path = 'data/empresas.json'
+                if not os.path.exists(empresas_path):
+                    return False
+                
+                with open(empresas_path, 'r', encoding='utf-8') as f:
+                    empresas = json.load(f)
+                
+                for i, empresa in enumerate(empresas):
+                    if empresa['id'] == empresa_id:
+                        empresas[i]['indice_reputacion'] = indice
+                        empresas[i]['ultima_actualizacion'] = datetime.datetime.now().isoformat()
+                        
+                        with open(empresas_path, 'w', encoding='utf-8') as f:
+                            json.dump(empresas, f, indent=4)
+                        
+                        return True
+                
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error al actualizar índice para {empresa_id}: {e}")
+            return False
+    
+    def ejecutar(self, host='0.0.0.0', port=5000, debug=False):
+        """
+        Ejecuta la aplicación web.
+        
+        Args:
+            host (str): Host para escuchar
+            port (int): Puerto para escuchar
+            debug (bool): Modo debug
+        """
+        self.app.run(host=host, port=port, debug=debug)
+    
+    def crear_datos_demo(self):
+        """
+        Crea datos de demostración para la aplicación.
+        """
+        # Verificar si ya existen datos
+        if os.path.exists('data/empresas.json'):
+            with open('data/empresas.json', 'r', encoding='utf-8') as f:
+                empresas = json.load(f)
+                if empresas:
+                    logger.info("Ya existen datos de demostración")
+                    return
+        
+        logger.info("Creando datos de demostración...")
+        
+        # Crear algunas empresas
+        empresas_demo = [
+            {
+                "nombre": "TechSolutions Chile",
+                "rubro": "Tecnología",
+                "region": "Santiago",
+                "descripcion": "Empresa líder en soluciones tecnológicas para negocios"
+            },
+            {
+                "nombre": "Banco Nacional",
+                "rubro": "Finanzas",
+                "region": "Santiago",
+                "descripcion": "Servicios financieros para personas y empresas"
+            },
+            {
+                "nombre": "SuperMercado Express",
+                "rubro": "Retail",
+                "region": "Valparaíso",
+                "descripcion": "Cadena de supermercados con productos frescos y precios bajos"
+            },
+            {
+                "nombre": "Telecomunicaciones del Sur",
+                "rubro": "Telecomunicaciones",
+                "region": "Concepción",
+                "descripcion": "Servicios de internet, telefonía y televisión"
+            },
+            {
+                "nombre": "Constructora Andes",
+                "rubro": "Construcción",
+                "region": "Santiago",
+                "descripcion": "Proyectos inmobiliarios y obras civiles"
+            }
+        ]
+        
+        # Crear usuario administrador
+        exito, mensaje, admin = self.auth.registrar_usuario(
+            email="admin@ejemplo.com",
+            password="Admin123",
+            nombre="Administrador",
+            acepta_terminos=True
+        )
+        
+        if not exito:
+            logger.warning(f"No se pudo crear usuario administrador: {mensaje}")
+        
+        # Crear usuario normal
+        exito, mensaje, usuario = self.auth.registrar_usuario(
+            email="usuario@ejemplo.com",
+            password="Usuario123",
+            nombre="Usuario Demo",
+            acepta_terminos=True
+        )
+        
+        if not exito:
+            logger.warning(f"No se pudo crear usuario demo: {mensaje}")
+        
+        # Agregar empresas
+        empresas_creadas = []
+        for empresa_data in empresas_demo:
+            exito, mensaje, empresa = self.reviews.agregar_empresa(
+                nombre=empresa_data["nombre"],
+                rubro=empresa_data["rubro"],
+                region=empresa_data["region"],
+                descripcion=empresa_data["descripcion"]
+            )
+            
+            if exito:
+                empresas_creadas.append(empresa)
+                logger.info(f"Empresa creada: {empresa['nombre']}")
+            else:
+                logger.warning(f"No se pudo crear empresa {empresa_data['nombre']}: {mensaje}")
+        
+        # Agregar algunas reseñas
+        if empresas_creadas and admin and usuario:
+            reseñas_demo = [
+                {
+                    "empresa_id": empresas_creadas[0]["id"],
+                    "usuario_id": admin["uid"],
+                    "texto": "Excelente servicio al cliente y productos de alta calidad. Muy recomendable para soluciones empresariales.",
+                    "rating": 4.5,
+                    "es_cliente": True
+                },
+                {
+                    "empresa_id": empresas_creadas[0]["id"],
+                    "usuario_id": usuario["uid"],
+                    "texto": "Buenos productos pero el soporte técnico podría mejorar. En general una experiencia positiva pero con margen de mejora.",
+                    "rating": 3.5,
+                    "es_cliente": True
+                },
+                {
+                    "empresa_id": empresas_creadas[1]["id"],
+                    "usuario_id": admin["uid"],
+                    "texto": "Buen servicio bancario pero las comisiones son algo elevadas. La aplicación móvil funciona muy bien.",
+                    "rating": 4.0,
+                    "es_cliente": True
+                },
+                {
+                    "empresa_id": empresas_creadas[2]["id"],
+                    "usuario_id": usuario["uid"],
+                    "texto": "Precios competitivos y buena selección de productos. El servicio a domicilio es rápido y eficiente.",
+                    "rating": 4.8,
+                    "es_cliente": True
+                }
+            ]
+            
+            for resena_data in reseñas_demo:
+                exito, mensaje, resena = self.reviews.crear_resena(
+                    usuario_id=resena_data["usuario_id"],
+                    empresa_id=resena_data["empresa_id"],
+                    texto=resena_data["texto"],
+                    rating=resena_data["rating"],
+                    es_cliente=resena_data["es_cliente"]
+                )
+                
+                if exito:
+                    logger.info(f"Reseña creada para {resena_data['empresa_id']}")
+                else:
+                    logger.warning(f"No se pudo crear reseña: {mensaje}")
+        
+        logger.info("Datos de demostración creados con éxito")
+
+
+# Punto de entrada para ejecutar la aplicación
+if __name__ == "__main__":
+    # Crear instancia de la aplicación
+    app = AppReputacionDigital(modo_db="local")
+    
+    # Crear datos de demostración si no existen
+    app.crear_datos_demo()
+    
+    # Ejecutar la aplicación
+    app.ejecutar(host='0.0.0.0', port=5000, debug=True)
