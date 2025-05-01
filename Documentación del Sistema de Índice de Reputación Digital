@@ -1,0 +1,552 @@
+# Documentación del Sistema de Índice de Reputación Digital
+
+## 1. Visión General del Sistema
+
+El Sistema de Índice de Reputación Digital es una herramienta diseñada para evaluar la reputación online de empresas chilenas mediante el análisis de múltiples fuentes de datos públicos. El sistema calcula un índice de reputación en una escala de 0 a 100, basado en la combinación ponderada de diferentes métricas como calificaciones, comentarios, menciones en redes sociales y cobertura en medios de comunicación.
+
+### Características principales:
+
+- **Análisis multifuente**: Integra datos de Google My Business, foros, redes sociales y medios de prensa.
+- **Análisis de sentimiento**: Evalúa el tono y sentimiento de comentarios y noticias.
+- **Visualización interactiva**: Genera gráficos detallados de los resultados.
+- **Detección de alertas**: Identifica riesgos potenciales para la reputación.
+- **Interfaz web amigable**: Facilita el uso del sistema a usuarios no técnicos.
+- **Exportación de datos**: Permite exportar resultados en formatos JSON y CSV.
+- **Integración con Firebase**: Facilita el despliegue en la nube y el almacenamiento de datos.
+
+## 2. Arquitectura del Sistema
+
+El sistema está organizado en varios componentes modulares:
+
+### 2.1 Componentes Principales
+
+1. **Núcleo de análisis** (`indice_reputacion_digital.py`):
+   - Clase principal `IndiceReputacionDigital`
+   - Funciones de extracción de datos de múltiples fuentes
+   - Módulo de análisis de sentimiento
+   - Cálculo del índice de reputación
+   - Generación de visualizaciones
+
+2. **Interfaz web** (`app_web.py`):
+   - Servidor Flask
+   - Formulario de entrada de datos
+   - Visualización de resultados
+   - Exportación de datos
+
+3. **Integración con Firebase** (`firebase_integration.py`):
+   - Conexión con Firestore
+   - Almacenamiento en Cloud Storage
+   - Cloud Functions para procesamiento en la nube
+
+4. **Demostración y utilidades** (`demo_sistema.py`):
+   - Script de demostración del sistema
+   - Visualización local de resultados
+
+### 2.2 Diagrama de Flujo de Datos
+
+```
+[Usuario] → [Formulario Web] → [IndiceReputacionDigital]
+                                        ↓
+[Google My Business] ← [Extracción de datos] → [Foros/Redes sociales] → [Medios de prensa]
+                                        ↓
+                               [Análisis de sentimiento]
+                                        ↓
+                             [Cálculo de índice y subíndices]
+                                        ↓
+                                [Generación de alertas]
+                                        ↓
+                             [Visualización y exportación]
+                                        ↓
+[Usuario] ← [Interfaz Web] ← [Índice de reputación y gráficos]
+```
+
+## 3. Componentes en Detalle
+
+### 3.1 Clase IndiceReputacionDigital
+
+Esta es la clase principal que coordina todo el proceso de análisis. Sus métodos principales son:
+
+#### Inicialización
+
+```python
+def __init__(self, nombre_empresa, region=None, rubro=None):
+    """
+    Inicializa el sistema con los parámetros básicos de la empresa
+    
+    Args:
+        nombre_empresa (str): Nombre comercial de la empresa
+        region (str, opcional): Región o ciudad donde opera la empresa
+        rubro (str, opcional): Sector industrial o rubro de la empresa
+    """
+```
+
+La inicialización configura:
+- Datos básicos de la empresa
+- Estructura para almacenar resultados
+- Modelo de análisis de sentimiento (transformer o fallback)
+
+#### Extracción de Datos
+
+**Google My Business**:
+```python
+def buscar_gmb(self):
+    """
+    Busca y extrae información del perfil de Google My Business de la empresa.
+    Si no se puede acceder vía API, simula la extracción de datos.
+    
+    Returns:
+        dict: Información de GMB que incluye rating promedio, número de reviews y comentarios recientes
+    """
+```
+
+Este método:
+- Simula extracción de datos de Google My Business
+- Genera calificaciones y comentarios con distribución realista
+- Ajusta los resultados según el rubro de la empresa
+- Almacena comentarios destacados para el reporte final
+
+**Redes Sociales y Foros**:
+```python
+def buscar_reclamos(self):
+    """
+    Busca menciones y comentarios sobre la empresa en foros y redes sociales como
+    Reclamos.cl, Reddit y Foros.cl
+    
+    Returns:
+        dict: Información recopilada de foros que incluye menciones y análisis de sentimiento
+    """
+```
+
+Este método:
+- Simula búsqueda en reclamos.cl, Reddit, y otros foros
+- Genera menciones con diferente distribución de sentimiento según la plataforma
+- Identifica alertas basadas en comentarios negativos recientes
+
+**Medios de Prensa**:
+```python
+def buscar_noticias(self):
+    """
+    Busca y analiza noticias sobre la empresa en medios de prensa online en Chile.
+    Extrae titulares y realiza análisis de sentimiento.
+    
+    Returns:
+        dict: Información de noticias que incluye titulares, análisis de sentimiento y frecuencia
+    """
+```
+
+Este método:
+- Simula búsqueda en medios chilenos (BioBio, Emol, La Tercera, etc.)
+- Genera titulares basados en patrones típicos de noticias
+- Distribuye las noticias en el tiempo para análisis de tendencias
+
+#### Análisis de Sentimiento
+
+```python
+def analizar_sentimiento(self, texto, contexto=None):
+    """
+    Analiza el sentimiento de un texto utilizando el modelo de NLP cargado.
+    Si no hay modelo disponible, utiliza una aproximación basada en palabras clave.
+    
+    Args:
+        texto (str): Texto a analizar
+        contexto (str, opcional): Contexto adicional para el análisis
+            
+    Returns:
+        dict: Resultado del análisis con sentimiento y puntaje
+    """
+```
+
+Este método:
+- Intenta usar el modelo transformer `finiteautomata/beto-sentiment-analysis`
+- Si no está disponible, usa un método de fallback basado en palabras clave
+- Clasifica textos como positivos, neutros o negativos
+- Asigna un puntaje de intensidad de sentimiento
+
+#### Análisis de Tendencia
+
+```python
+def analizar_tendencia(self):
+    """
+    Analiza la tendencia reciente (últimos 6 meses) en la reputación
+    basada en la evolución de comentarios y noticias.
+    
+    Returns:
+        dict: Información sobre tendencias que incluye dirección y velocidad
+    """
+```
+
+Este método:
+- Crea una línea de tiempo de los últimos 6 meses
+- Analiza la evolución temporal de comentarios y noticias
+- Calcula la dirección y velocidad de cambio en la reputación
+- Detecta caídas sostenidas en la reputación (alertas)
+
+#### Cálculo del Índice
+
+```python
+def calcular_indice(self):
+    """
+    Calcula el índice final de reputación digital (0-100) basado en las ponderaciones
+    definidas y todos los datos recopilados.
+    
+    Returns:
+        float: Índice final de reputación digital
+    """
+```
+
+Este método:
+- Calcula subíndices para cada componente (GMB, foros, noticias, etc.)
+- Normaliza cada subíndice a escala 0-100
+- Aplica ponderaciones según la configuración
+- Calcula el índice final ponderado
+
+#### Visualización
+
+```python
+def generar_graficos(self):
+    """
+    Genera gráficos para visualizar los resultados del análisis.
+    
+    Returns:
+        dict: Rutas a los gráficos generados
+    """
+```
+
+Este método usa matplotlib para generar:
+- Gráfico de composición del índice (torta)
+- Gráfico de evolución temporal (línea)
+- Gráfico de barras para subíndices
+
+```python
+def generar_graficos_plotly(self):
+    """
+    Genera gráficos interactivos usando Plotly para visualizar los resultados.
+    
+    Returns:
+        dict: Objetos de figuras de Plotly
+    """
+```
+
+Este método usa Plotly para gráficos interactivos:
+- Gráfico de composición interactivo
+- Línea de tiempo con tooltips
+- Barras interactivas con detalles por componente
+
+### 3.2 Aplicación Web
+
+La aplicación web (`app_web.py`) proporciona una interfaz amigable para el sistema, con las siguientes rutas:
+
+- **`/`**: Página principal con formulario de entrada
+- **`/analizar`**: Endpoint para procesar el análisis
+- **`/resultados/<id_analisis>`**: Visualización de resultados
+- **`/exportar/<id_analisis>/<formato>`**: Exportación de resultados
+- **`/historial`**: Consulta de análisis anteriores
+
+La interfaz web está construida con:
+- Flask para el backend
+- Bootstrap para el diseño responsivo
+- Plotly.js para gráficos interactivos
+- Jinja2 para las plantillas HTML
+
+### 3.3 Integración con Firebase
+
+El módulo de integración con Firebase (`firebase_integration.py`) permite:
+
+- Guardar análisis en Firestore
+- Almacenar gráficos en Cloud Storage
+- Recuperar resultados históricos
+- Ejecutar análisis programados mediante Cloud Functions
+
+## 4. Configuración del Sistema
+
+### 4.1 Ponderaciones del Índice
+
+Las ponderaciones para el cálculo del índice se definen en el diccionario `CONFIG`:
+
+```python
+CONFIG = {
+    "ponderaciones": {
+        "rating_gmb": 0.30,          # Rating de Google My Business (30%)
+        "volumen_comentarios": 0.10,  # Volumen de comentarios (10%)
+        "sentimiento_foros": 0.20,    # Sentimiento en foros (20%)
+        "sentimiento_noticias": 0.30, # Sentimiento en noticias (30%)
+        "tendencia_reciente": 0.10    # Tendencia últimos 6 meses (10%)
+    },
+    # ...
+}
+```
+
+### 4.2 Fuentes de Datos
+
+Las fuentes de datos se configuran también en `CONFIG`:
+
+```python
+CONFIG = {
+    # ...
+    "fuentes_noticias": [
+        "biobiochile.cl",
+        "emol.com",
+        "latercera.com",
+        "df.cl",
+        "fastcheck.cl",
+        "cnnchile.com"
+    ],
+    "foros": [
+        "reclamos.cl",
+        "reddit.com",
+        "foros.cl"
+    ],
+    # ...
+}
+```
+
+## 5. Algoritmos y Metodologías Clave
+
+### 5.1 Cálculo del Índice de Reputación
+
+El índice se calcula en varios pasos:
+
+1. **Rating GMB**:
+   - Convertir rating de 1-5 a escala 0-100
+   - `rating_normalizado = (rating_promedio - 1) / 4 * 100`
+
+2. **Volumen de comentarios**:
+   - Normalizar cantidad total de comentarios
+   - `volumen_normalizado = min(100, total_comentarios / 5)`
+
+3. **Sentimiento en foros**:
+   - Calcular porcentaje ponderado de menciones positivas/neutras/negativas
+   - `sentimiento_foros_normalizado = (total_ponderado / total_posible) * 100`
+
+4. **Sentimiento en noticias**:
+   - Aplicar pesos diferentes a noticias positivas/negativas (las negativas tienen más impacto)
+   - Normalizar a escala 0-100
+
+5. **Tendencia reciente**:
+   - Valorar dirección y velocidad de tendencia
+   - Entre 0-100 dependiendo de si es positiva, negativa o estable
+
+6. **Índice final**:
+   - Aplicar ponderaciones de cada componente
+   - `indice_final = suma(subindice * ponderacion)`
+
+### 5.2 Análisis de Sentimiento
+
+El sistema utiliza dos enfoques para el análisis de sentimiento:
+
+1. **Modelo transformer** (preferido):
+   - Utiliza `finiteautomata/beto-sentiment-analysis` de Hugging Face
+   - Modelo especializado para español
+   - Clasificación en positivo, negativo o neutro
+   - Puntaje de confianza para intensidad
+
+2. **Método de fallback** (si el transformer no está disponible):
+   - Basado en diccionarios de palabras clave positivas y negativas
+   - Cuenta ocurrencias de palabras en cada categoría
+   - Normaliza puntaje según longitud del texto
+   - Asigna sentimiento según balance de palabras positivas vs. negativas
+
+### 5.3 Detección de Alertas
+
+El sistema detecta tres tipos de alertas:
+
+1. **Comentarios negativos recientes**:
+   - Alerta si hay 3+ comentarios negativos en foros en los últimos 30 días
+   - `nivel: alto`
+
+2. **Noticias negativas recientes**:
+   - Alerta si hay 3+ noticias negativas en los últimos 90 días
+   - `nivel: alto`
+
+3. **Caída sostenida en reputación**:
+   - Alerta si hay caída consistente en los últimos 6 meses
+   - `nivel: medio`
+
+## 6. Estructura de Datos
+
+### 6.1 Estructura Principal
+
+La clase `IndiceReputacionDigital` mantiene los siguientes datos:
+
+```python
+self.datos = {
+    "gmb": { ... },      # Datos de Google My Business
+    "foros": { ... },    # Datos de foros y redes sociales
+    "noticias": { ... }, # Datos de medios de prensa
+    "tendencia": { ... } # Datos de tendencia temporal
+}
+
+self.subindices = {      # Subíndices calculados
+    "rating_gmb": 0,
+    "volumen_comentarios": 0,
+    "sentimiento_foros": 0,
+    "sentimiento_noticias": 0,
+    "tendencia_reciente": 0
+}
+
+self.alertas = []        # Alertas detectadas
+
+self.comentarios_destacados = {
+    "positivos": [],
+    "negativos": []
+}
+```
+
+### 6.2 Formato de Resultados
+
+El resultado final del análisis incluye:
+
+```python
+{
+    "empresa": "Nombre de la empresa",
+    "region": "Región o ciudad",
+    "rubro": "Sector industrial",
+    "fecha_analisis": "30/04/2025 15:30:45",
+    "indice_final": 76.42,
+    "subindices": {
+        "rating_gmb": 85.0,
+        "volumen_comentarios": 62.4,
+        "sentimiento_foros": 73.1,
+        "sentimiento_noticias": 81.5,
+        "tendencia_reciente": 45.2
+    },
+    "alertas": [
+        {
+            "tipo": "riesgo_comentarios",
+            "descripcion": "Se detectaron 4 comentarios negativos en foros en los últimos 30 días",
+            "nivel": "alto"
+        }
+    ],
+    "comentarios_destacados": {
+        "positivos": [
+            {
+                "fuente": "Google My Business",
+                "texto": "Excelente servicio...",
+                "fecha": "15/04/2025"
+            },
+            ...
+        ],
+        "negativos": [
+            {
+                "fuente": "reclamos.cl",
+                "texto": "Pésima experiencia...",
+                "fecha": "20/04/2025"
+            },
+            ...
+        ]
+    }
+}
+```
+
+## 7. Limitaciones y Consideraciones
+
+### 7.1 Limitaciones Actuales
+
+1. **Simulación de datos**: 
+   - El sistema actualmente simula datos para demostración
+   - Para uso en producción, se necesitaría implementar conexión real a las APIs o scraping
+
+2. **Análisis de sentimiento**:
+   - El método de fallback es básico y podría mejorarse con un lexicón más completo
+   - El modelo transformer requiere recursos significativos
+
+3. **Escalabilidad**:
+   - El análisis completo puede ser costoso computacionalmente para muchas empresas
+   - Considerar procesamiento distribuido para uso intensivo
+
+### 7.2 Aspectos Legales
+
+1. **Web scraping**:
+   - Verificar términos de servicio de cada plataforma
+   - Implementar limitación de tasa y headers adecuados
+   - Considerar usar APIs públicas cuando estén disponibles
+
+2. **Privacidad de datos**:
+   - El sistema solo procesa datos públicos
+   - No almacenar información personal o sensible
+   - Cumplir con leyes de protección de datos chilenas
+
+### 7.3 Posibles Mejoras
+
+1. **Fuentes adicionales**:
+   - Integrar Instagram, Facebook, LinkedIn
+   - Agregar análisis de comentarios en YouTube
+   - Incorporar rankings sectoriales específicos
+
+2. **Análisis avanzado**:
+   - Análisis de entidades nombradas (NER)
+   - Detección de temas recurrentes
+   - Análisis comparativo con competidores
+
+3. **Predicción de tendencias**:
+   - Implementar modelos predictivos para anticipar cambios
+   - Alertas tempranas de problemas potenciales
+
+## 8. Guía de Uso Rápida
+
+### 8.1 Ejecución básica
+
+```python
+from indice_reputacion_digital import IndiceReputacionDigital
+
+# Crear instancia
+analizador = IndiceReputacionDigital(nombre_empresa="Falabella", 
+                                     region="Metropolitana", 
+                                     rubro="Retail")
+
+# Ejecutar análisis completo
+analizador.ejecutar_analisis_completo()
+
+# Mostrar resultados
+analizador.mostrar_resultados()
+
+# Exportar resultados
+analizador.exportar_resultados(formato="json")
+```
+
+### 8.2 Personalización de componentes
+
+```python
+# Ejecutar solo análisis específicos
+analizador = IndiceReputacionDigital("Empresa XYZ")
+analizador.buscar_gmb()
+analizador.buscar_reclamos()
+analizador.analizar_tendencia()
+analizador.calcular_indice()
+
+# Modificar ponderaciones en tiempo de ejecución
+analizador.CONFIG["ponderaciones"]["rating_gmb"] = 0.40
+analizador.CONFIG["ponderaciones"]["sentimiento_noticias"] = 0.20
+analizador.calcular_indice()  # Recalcular con nuevas ponderaciones
+```
+
+### 8.3 Visualización personalizada
+
+```python
+# Generar solo gráficos específicos
+graficos = analizador.generar_graficos_plotly()
+fig_evolucion = graficos["evolucion"]
+
+# Personalizar gráfico
+fig_evolucion.update_layout(
+    title="Evolución personalizada",
+    height=700,
+    plot_bgcolor='#f9f9f9'
+)
+
+# Guardar o mostrar
+fig_evolucion.write_html("evolucion_personalizada.html")
+```
+
+## 9. Conclusión
+
+El Sistema de Índice de Reputación Digital proporciona una herramienta valiosa para empresas chilenas que desean monitorear y mejorar su presencia online. Combinando múltiples fuentes de datos y técnicas avanzadas de análisis, ofrece una visión integral de la reputación digital, destacando fortalezas, debilidades y áreas de riesgo.
+
+Este sistema puede utilizarse para:
+- Monitoreo continuo de la reputación online
+- Detección temprana de problemas reputacionales
+- Medición del impacto de campañas de marketing
+- Benchmarking contra competidores
+- Mejora estratégica de la presencia digital
+
+Con su diseño modular y capacidad de despliegue en diversos entornos, el sistema es adaptable a diferentes necesidades y escalas de operación.
