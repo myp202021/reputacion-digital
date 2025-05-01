@@ -1,0 +1,288 @@
+"""
+Demostración del Sistema de Índice de Reputación Digital
+=======================================================
+Este script demuestra el funcionamiento del sistema de análisis de reputación
+digital para empresas chilenas.
+"""
+
+from indice_reputacion_digital import IndiceReputacionDigital
+import matplotlib.pyplot as plt
+import pandas as pd
+import json
+import os
+
+def demostrar_sistema():
+    """
+    Ejecuta una demostración completa del sistema con una empresa de ejemplo.
+    """
+    print("\n" + "="*80)
+    print("DEMOSTRACIÓN DEL SISTEMA DE ÍNDICE DE REPUTACIÓN DIGITAL")
+    print("="*80 + "\n")
+    
+    # Datos de ejemplo
+    empresa = "Falabella"
+    region = "Metropolitana"
+    rubro = "Retail"
+    
+    print(f"Analizando empresa: {empresa}")
+    print(f"Región: {region}")
+    print(f"Rubro: {rubro}\n")
+    
+    # Crear instancia del analizador
+    analizador = IndiceReputacionDigital(empresa, region, rubro)
+    
+    # Ejecutar análisis paso a paso
+    print("EJECUTANDO ANÁLISIS PASO A PASO:")
+    print("-"*50)
+    
+    # 1. Análisis de Google My Business
+    print("\n1. ANÁLISIS DE GOOGLE MY BUSINESS:")
+    datos_gmb = analizador.buscar_gmb()
+    
+    print(f"  - Rating promedio: {datos_gmb['rating_promedio']}")
+    print(f"  - Número de reseñas: {datos_gmb['num_reviews']}")
+    print("  - Últimos comentarios:")
+    for i, comentario in enumerate(datos_gmb['comentarios'][:3], 1):
+        print(f"    {i}. [{comentario['fecha']}] {comentario['texto']}")
+    
+    # 2. Análisis de foros y redes sociales
+    print("\n2. ANÁLISIS DE FOROS Y REDES SOCIALES:")
+    datos_foros = analizador.buscar_reclamos()
+    
+    print(f"  - Total menciones: {datos_foros['total_menciones']}")
+    print(f"  - Menciones positivas: {datos_foros['menciones_positivas']}")
+    print(f"  - Menciones neutras: {datos_foros['menciones_neutras']}")
+    print(f"  - Menciones negativas: {datos_foros['menciones_negativas']}")
+    print("  - Ejemplos de menciones:")
+    
+    # Mostrar un ejemplo de cada tipo de sentimiento
+    for sentimiento in ["positivo", "neutro", "negativo"]:
+        comentarios = [c for c in datos_foros['comentarios'] if c['sentimiento'] == sentimiento]
+        if comentarios:
+            print(f"    * {sentimiento.upper()}: [{comentarios[0]['fuente']}] {comentarios[0]['texto']}")
+    
+    # 3. Análisis de noticias
+    print("\n3. ANÁLISIS DE NOTICIAS EN MEDIOS:")
+    datos_noticias = analizador.buscar_noticias()
+    
+    print(f"  - Total noticias: {datos_noticias['total_noticias']}")
+    print(f"  - Noticias positivas: {datos_noticias['noticias_positivas']}")
+    print(f"  - Noticias neutras: {datos_noticias['noticias_neutras']}")
+    print(f"  - Noticias negativas: {datos_noticias['noticias_negativas']}")
+    
+    if datos_noticias['noticias']:
+        print("  - Ejemplos de titulares:")
+        for i, noticia in enumerate(datos_noticias['noticias'][:3], 1):
+            print(f"    {i}. [{noticia['sentimiento'].upper()}] {noticia['titulo']}")
+    
+    # 4. Análisis de tendencia
+    print("\n4. ANÁLISIS DE TENDENCIA:")
+    datos_tendencia = analizador.analizar_tendencia()
+    
+    print(f"  - Dirección de tendencia: {datos_tendencia['direccion']}")
+    print(f"  - Velocidad de cambio: {datos_tendencia['velocidad']:.2f}")
+    print("  - Evolución por meses:")
+    
+    for i, mes in enumerate(datos_tendencia['meses']):
+        valor = datos_tendencia['valores_promedio'][i]
+        print(f"    * {mes}: {valor:.1f}")
+    
+    # 5. Cálculo del índice final
+    print("\n5. CÁLCULO DEL ÍNDICE FINAL:")
+    indice_final = analizador.calcular_indice()
+    
+    print(f"  - ÍNDICE DE REPUTACIÓN: {indice_final}/100")
+    print("  - Desglose por componentes:")
+    
+    for subindice, valor in analizador.subindices.items():
+        ponderacion = analizador.CONFIG["ponderaciones"][subindice]
+        contribucion = valor * ponderacion
+        print(f"    * {subindice}: {valor:.1f} (Ponderación: {ponderacion:.2f}, Contribución: {contribucion:.1f})")
+    
+    # 6. Visualización con gráficos
+    print("\n6. GENERACIÓN DE GRÁFICOS:")
+    graficos = analizador.generar_graficos()
+    
+    for tipo, ruta in graficos.items():
+        print(f"  - Gráfico de {tipo}: {ruta}")
+    
+    # Generar versión interactiva
+    print("\n  Generando gráficos interactivos con Plotly...")
+    graficos_plotly = analizador.generar_graficos_plotly()
+    print(f"  - {len(graficos_plotly)} gráficos interactivos generados")
+    
+    # 7. Generar alertas
+    print("\n7. ANÁLISIS DE ALERTAS:")
+    
+    if analizador.alertas:
+        print(f"  Se detectaron {len(analizador.alertas)} alertas:")
+        for i, alerta in enumerate(analizador.alertas, 1):
+            print(f"  - Alerta {i}: [{alerta['nivel'].upper()}] {alerta['descripcion']}")
+    else:
+        print("  No se detectaron alertas de riesgo reputacional.")
+    
+    # 8. Exportación de resultados
+    print("\n8. EXPORTACIÓN DE RESULTADOS:")
+    
+    # Exportar en ambos formatos para demostración
+    ruta_json = analizador.exportar_resultados(formato="json")
+    ruta_csv = analizador.exportar_resultados(formato="csv")
+    
+    print(f"  - Datos exportados en formato JSON: {ruta_json}")
+    print(f"  - Datos exportados en formato CSV: {ruta_csv}")
+    
+    # 9. Resumen final
+    print("\n9. RESUMEN FINAL DEL ANÁLISIS:")
+    resumen = analizador.mostrar_resultados()
+    
+    print("\n" + "="*80)
+    print("DEMOSTRACIÓN COMPLETADA")
+    print("="*80)
+    
+    return analizador, resumen
+
+# Creación de una interfaz simple con visualización
+def visualizar_resultados(analizador):
+    """
+    Muestra los gráficos generados en una ventana interactiva.
+    
+    Args:
+        analizador (IndiceReputacionDigital): Instancia del analizador con datos procesados
+    """
+    # Crear visualización con matplotlib
+    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+    fig.suptitle(f"Análisis de Reputación Digital: {analizador.nombre_empresa}", fontsize=16)
+    
+    # 1. Gráfico del índice de reputación (gauge chart simplificado)
+    ax1 = axes[0, 0]
+    indice = analizador.indice_final
+    
+    # Definir colores según valor
+    if indice >= 80:
+        color = 'green'
+        estado = 'EXCELENTE'
+    elif indice >= 60:
+        color = 'blue'
+        estado = 'BUENO'
+    elif indice >= 40:
+        color = 'orange'
+        estado = 'REGULAR'
+    else:
+        color = 'red'
+        estado = 'DEFICIENTE'
+    
+    # Crear gráfico de semicírculo para simular un medidor
+    ax1.pie([indice, 100-indice], colors=[color, 'lightgrey'], startangle=90, counterclock=False,
+            wedgeprops={'width': 0.3, 'edgecolor': 'w'})
+    
+    # Añadir texto central
+    ax1.text(0, -0.2, f"{indice}", fontsize=36, ha='center', va='center', fontweight='bold')
+    ax1.text(0, 0.15, "ÍNDICE DE\nREPUTACIÓN", fontsize=14, ha='center', va='center')
+    ax1.text(0, -0.5, estado, fontsize=16, ha='center', va='center', fontweight='bold', color=color)
+    
+    ax1.set_aspect('equal')
+    ax1.set_title("Índice de Reputación Digital")
+    
+    # 2. Gráfico de composición (barras horizontales)
+    ax2 = axes[0, 1]
+    
+    subindices = analizador.subindices
+    nombres = list(subindices.keys())
+    valores = list(subindices.values())
+    
+    # Crear un dataframe para ordenar los valores
+    df_subindices = pd.DataFrame({
+        'Componente': nombres,
+        'Valor': valores
+    })
+    
+    # Ordenar por valor descendente
+    df_subindices = df_subindices.sort_values('Valor', ascending=True)
+    
+    # Crear un colormap basado en los valores
+    colores = ['#ff9999' if v < 40 else '#66b3ff' if v < 70 else '#99ff99' for v in df_subindices['Valor']]
+    
+    # Gráfico de barras horizontales
+    df_subindices.plot(kind='barh', x='Componente', y='Valor', color=colores, legend=False, ax=ax2)
+    
+    # Añadir etiquetas de valores
+    for i, v in enumerate(df_subindices['Valor']):
+        ax2.text(v + 1, i, f"{v:.1f}", va='center')
+    
+    ax2.set_title("Componentes del Índice")
+    ax2.set_xlim(0, 100)
+    ax2.axvline(x=50, color='r', linestyle='--', alpha=0.3)
+    
+    # 3. Gráfico de evolución temporal
+    ax3 = axes[1, 0]
+    
+    meses = analizador.datos["tendencia"]["meses"]
+    valores_promedio = analizador.datos["tendencia"]["valores_promedio"]
+    
+    ax3.plot(meses, valores_promedio, marker='o', linestyle='-', linewidth=2, color='#19a0aa')
+    
+    for i, valor in enumerate(valores_promedio):
+        ax3.text(i, valor + 2, f"{valor:.1f}", ha='center')
+    
+    ax3.set_title("Evolución Temporal")
+    ax3.set_ylim(0, 100)
+    ax3.grid(True, linestyle='--', alpha=0.7)
+    
+    # 4. Gráfico de menciones por fuente
+    ax4 = axes[1, 1]
+    
+    # Crear datos para el gráfico de torta
+    menciones = {'GMB': analizador.datos["gmb"].get("num_reviews", 0),
+                'Foros': analizador.datos["foros"].get("total_menciones", 0),
+                'Noticias': analizador.datos["noticias"].get("total_noticias", 0)}
+    
+    # Calcular menciones positivas y negativas
+    menciones_pos_neg = {
+        'Positivas': (analizador.datos["foros"].get("menciones_positivas", 0) + 
+                     analizador.datos["noticias"].get("noticias_positivas", 0)),
+        'Neutras': (analizador.datos["foros"].get("menciones_neutras", 0) + 
+                   analizador.datos["noticias"].get("noticias_neutras", 0)),
+        'Negativas': (analizador.datos["foros"].get("menciones_negativas", 0) + 
+                     analizador.datos["noticias"].get("noticias_negativas", 0))
+    }
+    
+    # Gráfico de doble torta (anidado)
+    tamaño = 0.3  # Tamaño del círculo interior
+    
+    # Gráfico exterior: menciones por sentimiento
+    wedges_out, texts_out = ax4.pie(menciones_pos_neg.values(), 
+                                   radius=1,
+                                   labels=menciones_pos_neg.keys(),
+                                   colors=['#99ff99', '#66b3ff', '#ff9999'],
+                                   wedgeprops=dict(width=0.3, edgecolor='w'),
+                                   textprops={'fontsize': 9})
+    
+    # Gráfico interior: menciones por fuente
+    wedges_in, texts_in = ax4.pie(menciones.values(), 
+                                 radius=0.7,
+                                 labels=menciones.keys(),
+                                 colors=['#ff7f0e', '#1f77b4', '#2ca02c'],
+                                 wedgeprops=dict(width=0.4, edgecolor='w'),
+                                 textprops={'fontsize': 9})
+    
+    ax4.set_title("Distribución de Menciones")
+    
+    # Ajustar diseño
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.92)
+    
+    # Mostrar visualización
+    plt.show()
+    
+    return fig
+
+if __name__ == "__main__":
+    # Ejecutar demostración completa
+    analizador, resumen = demostrar_sistema()
+    
+    # Visualizar resultados
+    try:
+        fig = visualizar_resultados(analizador)
+        print("\nVisualización completada. Cerrando la ventana de gráficos...")
+    except Exception as e:
+        print(f"\nError al visualizar resultados: {e}")
